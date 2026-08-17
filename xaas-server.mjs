@@ -162,6 +162,7 @@ const ROUTE_PRICE = {
   '/epcs': { usdc: '5000', sol: '5000000' },
   '/txcs': { usdc: '5000', sol: '5000000' },
   '/stcs': { usdc: '5000', sol: '5000000' },
+  '/psmp': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1078,6 +1079,14 @@ const BAZAAR = {
     found: 0,
     statuses: [],
   }),
+  '/psmp': bazaarExtension({
+    limit: '8',
+  }, {
+    limit: 8,
+    count: 0,
+    tps: 0,
+    samples: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1247,6 +1256,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/epcs': 'Live Solana current epoch progress after a minimum context slot',
         '/txcs': 'Live Solana ledger transaction count after a minimum context slot',
         '/stcs': 'Live Solana signature statuses after a minimum context slot',
+        '/psmp': 'Live Solana recent performance samples for a required sample limit',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1542,7 +1552,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                         ? ['solana', 'rpc', 'tx', 'slot']
                                                                                                                                                                                                                                                                                                         : path === '/stcs'
                                                                                                                                                                                                                                                                                                           ? ['solana', 'rpc', 'sig', 'slot']
-                                                                                                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                          : path === '/psmp'
+                                                                                                                                                                                                                                                                                                            ? ['solana', 'rpc', 'tps', 'samples']
+                                                                                                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -4409,6 +4421,45 @@ async function clusterTps() {
   return { tps, samples, generatedAt: new Date().toISOString() }
 }
 
+function parseRequiredLimit(raw, max = 32) {
+  if (raw === null || raw === '') {
+    const err = new Error('limit query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const limit = Number(raw)
+  if (!Number.isInteger(limit) || limit < 1 || limit > max) {
+    const err = new Error('limit must be an integer from 1 to ' + max)
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return limit
+}
+
+async function recentPerformanceSamples(limitRaw) {
+  const limit = parseRequiredLimit(limitRaw, 32)
+  const res = await rpc('getRecentPerformanceSamples', [limit])
+  const samples = (res.result || []).map((row) => ({
+    slot: row.slot,
+    numTransactions: row.numTransactions,
+    numSlots: row.numSlots,
+    samplePeriodSecs: row.samplePeriodSecs,
+    tps: row.samplePeriodSecs ? Number((row.numTransactions / row.samplePeriodSecs).toFixed(2)) : 0,
+  }))
+  const tps = samples.length
+    ? Number((samples.reduce((sum, row) => sum + row.tps, 0) / samples.length).toFixed(2))
+    : 0
+  return {
+    limit,
+    count: samples.length,
+    tps,
+    samples,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function transferFee(mint) {
   const res = await rpc('getAccountInfo', [mint, { encoding: 'jsonParsed', commitment: 'confirmed' }])
   const info = res.result?.value
@@ -6398,6 +6449,14 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/psmp': {
+    validate(url) {
+      parseRequiredLimit(url.searchParams.get('limit'), 32)
+    },
+    run: async (url) => recentPerformanceSamples(
+      url.searchParams.get('limit'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6553,6 +6612,7 @@ function catalogResources() {
     { path: '/epcs', description: 'Live Solana current epoch progress after a minimum context slot' },
     { path: '/txcs', description: 'Live Solana ledger transaction count after a minimum context slot' },
     { path: '/stcs', description: 'Live Solana signature statuses after a minimum context slot' },
+    { path: '/psmp', description: 'Live Solana recent performance samples for a required sample limit' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6768,6 +6828,7 @@ const server = createServer(async (req, res) => {
               { name: 'epoch_info_min_context', description: 'Paid Solana current epoch progress after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'transaction_count_min_context', description: 'Paid Solana ledger transaction count after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'signature_statuses_min_context', description: 'Paid Solana getSignatureStatuses after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { sigs: { type: 'string' }, slot: { type: 'string' } }, required: ['sigs', 'slot'] } },
+              { name: 'performance_samples', description: 'Paid Solana recent performance samples for a required sample limit. 0.01 USDC.', inputSchema: { type: 'object', properties: { limit: { type: 'string' } }, required: ['limit'] } },
             ],
           },
         })
@@ -6923,6 +6984,7 @@ const server = createServer(async (req, res) => {
         epoch_info_min_context: '/epcs',
         transaction_count_min_context: '/txcs',
         signature_statuses_min_context: '/stcs',
+        performance_samples: '/psmp',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
