@@ -32,6 +32,7 @@ const ROUTE_PRICE = {
   '/tz': { usdc: '5000', sol: '5000000' },
   '/units': { usdc: '5000', sol: '5000000' },
   '/isbn': { usdc: '3000', sol: '3000000' },
+  '/semver': { usdc: '3000', sol: '3000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -232,6 +233,11 @@ const BAZAAR = {
     valid: true,
     isbn13: '9780306406157',
   }),
+  '/semver': bazaarExtension({ a: '1.2.3', b: '1.3.0' }, {
+    a: '1.2.3',
+    b: '1.3.0',
+    cmp: -1,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -271,6 +277,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/tz': 'Convert a timestamp into any IANA timezone',
         '/units': 'Convert metric and imperial units',
         '/isbn': 'Validate ISBN-10/13 and convert between formats',
+        '/semver': 'Compare two SemVer versions',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -306,7 +313,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                     ? ['units', 'convert', 'metric', 'imperial']
                                     : path === '/isbn'
                                       ? ['isbn', 'book', 'validate', 'checksum']
-                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                      : path === '/semver'
+                                        ? ['semver', 'version', 'compare', 'npm']
+                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -659,6 +668,61 @@ const UNIT_TO_SI = {
   c: { dim: 'temp' },
   f: { dim: 'temp' },
   k: { dim: 'temp' },
+}
+
+function parseSemver(name, raw) {
+  const text = requireText(name, raw).trim()
+  const match = text.match(/^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/)
+  if (!match) {
+    const err = new Error(name + ' must be SemVer (major.minor.patch)')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return {
+    raw: text,
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4] || null,
+    build: match[5] || null,
+  }
+}
+
+function compareIdent(left, right) {
+  const aNum = /^\d+$/.test(left)
+  const bNum = /^\d+$/.test(right)
+  if (aNum && bNum) return Number(left) - Number(right)
+  if (aNum) return -1
+  if (bNum) return 1
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+function compareSemver(aRaw, bRaw) {
+  const a = parseSemver('a', aRaw)
+  const b = parseSemver('b', bRaw)
+  let cmp = a.major - b.major || a.minor - b.minor || a.patch - b.patch
+  if (cmp === 0) {
+    if (a.prerelease && !b.prerelease) cmp = -1
+    else if (!a.prerelease && b.prerelease) cmp = 1
+    else if (a.prerelease && b.prerelease) {
+      const aParts = a.prerelease.split('.')
+      const bParts = b.prerelease.split('.')
+      const n = Math.max(aParts.length, bParts.length)
+      for (let i = 0; i < n && cmp === 0; i++) {
+        if (aParts[i] === undefined) cmp = -1
+        else if (bParts[i] === undefined) cmp = 1
+        else cmp = compareIdent(aParts[i], bParts[i])
+      }
+    }
+  }
+  return {
+    a: a.raw,
+    b: b.raw,
+    cmp,
+    relation: cmp < 0 ? 'lt' : cmp > 0 ? 'gt' : 'eq',
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 function checkIsbn(raw) {
@@ -1094,6 +1158,10 @@ const PAID = {
     validate(url) { checkIsbn(url.searchParams.get('isbn')) },
     run: async (url) => checkIsbn(url.searchParams.get('isbn')),
   },
+  '/semver': {
+    validate(url) { compareSemver(url.searchParams.get('a'), url.searchParams.get('b')) },
+    run: async (url) => compareSemver(url.searchParams.get('a'), url.searchParams.get('b')),
+  },
 }
 
 function catalogResources() {
@@ -1119,6 +1187,7 @@ function catalogResources() {
     { path: '/tz', description: 'Convert a timestamp into any IANA timezone. Query: to, optional iso' },
     { path: '/units', description: 'Convert metric and imperial units. Query: value, from, to' },
     { path: '/isbn', description: 'Validate ISBN-10/13 and convert formats. Query: isbn' },
+    { path: '/semver', description: 'Compare two SemVer versions. Query: a, b' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1201,6 +1270,7 @@ const server = createServer(async (req, res) => {
               { name: 'timezone_convert', description: 'Paid IANA timezone convert. 0.005 USDC. Query: to, optional iso.', inputSchema: { type: 'object', properties: { to: { type: 'string' }, iso: { type: 'string' } }, required: ['to'] } },
               { name: 'unit_convert', description: 'Paid metric/imperial unit convert. 0.005 USDC.', inputSchema: { type: 'object', properties: { value: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' } }, required: ['value', 'from', 'to'] } },
               { name: 'isbn_check', description: 'Paid ISBN-10/13 validate and convert. 0.003 USDC.', inputSchema: { type: 'object', properties: { isbn: { type: 'string' } }, required: ['isbn'] } },
+              { name: 'semver_compare', description: 'Paid SemVer compare. 0.003 USDC.', inputSchema: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['a', 'b'] } },
             ],
           },
         })
@@ -1226,6 +1296,7 @@ const server = createServer(async (req, res) => {
         timezone_convert: '/tz',
         unit_convert: '/units',
         isbn_check: '/isbn',
+        semver_compare: '/semver',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
