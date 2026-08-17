@@ -30,6 +30,7 @@ const ROUTE_PRICE = {
   '/tls': { usdc: '10000', sol: '10000000' },
   '/fresh': { usdc: '5000', sol: '5000000' },
   '/tz': { usdc: '5000', sol: '5000000' },
+  '/units': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -219,6 +220,12 @@ const BAZAAR = {
     local: '2026-08-17 15:00:00',
     offset: '+02:00',
   }),
+  '/units': bazaarExtension({ value: '1', from: 'km', to: 'mi' }, {
+    value: 1,
+    from: 'km',
+    to: 'mi',
+    result: 0.621371,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -256,6 +263,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/tls': 'TLS certificate expiry and issuer for a public host',
         '/fresh': 'Timestamped content fingerprint for a public HTTPS URL',
         '/tz': 'Convert a timestamp into any IANA timezone',
+        '/units': 'Convert metric and imperial units',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -287,7 +295,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                 ? ['freshness', 'hash', 'monitor', 'change']
                                 : path === '/tz'
                                   ? ['timezone', 'convert', 'iana', 'calendar']
-                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                  : path === '/units'
+                                    ? ['units', 'convert', 'metric', 'imperial']
+                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -617,6 +627,66 @@ async function contentFresh(target) {
     etag: res.headers.get('etag'),
     lastModified: res.headers.get('last-modified'),
     observedAt: new Date().toISOString(),
+  }
+}
+
+const UNIT_TO_SI = {
+  m: { dim: 'length', factor: 1 },
+  km: { dim: 'length', factor: 1000 },
+  cm: { dim: 'length', factor: 0.01 },
+  mm: { dim: 'length', factor: 0.001 },
+  mi: { dim: 'length', factor: 1609.344 },
+  yd: { dim: 'length', factor: 0.9144 },
+  ft: { dim: 'length', factor: 0.3048 },
+  in: { dim: 'length', factor: 0.0254 },
+  kg: { dim: 'mass', factor: 1 },
+  g: { dim: 'mass', factor: 0.001 },
+  lb: { dim: 'mass', factor: 0.45359237 },
+  oz: { dim: 'mass', factor: 0.028349523125 },
+  l: { dim: 'volume', factor: 1 },
+  ml: { dim: 'volume', factor: 0.001 },
+  gal: { dim: 'volume', factor: 3.785411784 },
+  qt: { dim: 'volume', factor: 0.946352946 },
+  c: { dim: 'temp' },
+  f: { dim: 'temp' },
+  k: { dim: 'temp' },
+}
+
+function convertUnits(rawValue, fromRaw, toRaw) {
+  const from = requireText('from', fromRaw).toLowerCase()
+  const to = requireText('to', toRaw).toLowerCase()
+  const value = Number(rawValue)
+  const src = UNIT_TO_SI[from]
+  const dst = UNIT_TO_SI[to]
+  if (!src || !dst) {
+    const err = new Error('from and to must be supported units: ' + Object.keys(UNIT_TO_SI).join(', '))
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  if (src.dim !== dst.dim) {
+    const err = new Error('cannot convert ' + from + ' to ' + to)
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  let result
+  if (src.dim === 'temp') {
+    let celsius = value
+    if (from === 'f') celsius = (value - 32) * 5 / 9
+    if (from === 'k') celsius = value - 273.15
+    result = celsius
+    if (to === 'f') result = celsius * 9 / 5 + 32
+    if (to === 'k') result = celsius + 273.15
+  } else {
+    result = value * src.factor / dst.factor
+  }
+  return {
+    value,
+    from,
+    to,
+    result: Number(result.toPrecision(12)),
+    generatedAt: new Date().toISOString(),
   }
 }
 
@@ -970,6 +1040,10 @@ const PAID = {
     validate(url) { requireIana('to', url.searchParams.get('to')) },
     run: async (url) => convertTimezone(url.searchParams.get('iso'), url.searchParams.get('to')),
   },
+  '/units': {
+    validate(url) { convertUnits(url.searchParams.get('value'), url.searchParams.get('from'), url.searchParams.get('to')) },
+    run: async (url) => convertUnits(url.searchParams.get('value'), url.searchParams.get('from'), url.searchParams.get('to')),
+  },
 }
 
 function catalogResources() {
@@ -993,6 +1067,7 @@ function catalogResources() {
     { path: '/tls', description: 'TLS certificate expiry and issuer. Query: host' },
     { path: '/fresh', description: 'Timestamped content fingerprint for a public HTTPS URL. Query: url' },
     { path: '/tz', description: 'Convert a timestamp into any IANA timezone. Query: to, optional iso' },
+    { path: '/units', description: 'Convert metric and imperial units. Query: value, from, to' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1073,6 +1148,7 @@ const server = createServer(async (req, res) => {
               { name: 'tls_check', description: 'Paid TLS certificate expiry check for a public host. 0.01 USDC.', inputSchema: { type: 'object', properties: { host: { type: 'string' } }, required: ['host'] } },
               { name: 'content_fresh', description: 'Paid HTTPS content fingerprint (sha256 + headers). 0.005 USDC.', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
               { name: 'timezone_convert', description: 'Paid IANA timezone convert. 0.005 USDC. Query: to, optional iso.', inputSchema: { type: 'object', properties: { to: { type: 'string' }, iso: { type: 'string' } }, required: ['to'] } },
+              { name: 'unit_convert', description: 'Paid metric/imperial unit convert. 0.005 USDC.', inputSchema: { type: 'object', properties: { value: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' } }, required: ['value', 'from', 'to'] } },
             ],
           },
         })
@@ -1096,6 +1172,7 @@ const server = createServer(async (req, res) => {
         tls_check: '/tls',
         content_fresh: '/fresh',
         timezone_convert: '/tz',
+        unit_convert: '/units',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
