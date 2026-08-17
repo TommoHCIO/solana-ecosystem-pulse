@@ -602,6 +602,9 @@ const server = createServer(async (req, res) => {
     return res.end()
   }
   try {
+    if (url.pathname === '/.well-known/mcp/server-card.json') {
+      return sendFile(res, join(ROOT, '.well-known/mcp/server-card.json'), 'application/json; charset=utf-8')
+    }
     if (url.pathname === '/.well-known/x402.json') {
       return json(res, 200, {
         x402Version: 2,
