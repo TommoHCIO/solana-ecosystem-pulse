@@ -122,6 +122,7 @@ const ROUTE_PRICE = {
   '/nshd': { usdc: '10000', sol: '10000000' },
   '/rwme': { usdc: '10000', sol: '10000000' },
   '/gpmd': { usdc: '15000', sol: '15000000' },
+  '/vcur': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -740,6 +741,10 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/vcur': bazaarExtension({}, {
+    count: 0,
+    current: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -869,6 +874,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/nshd': 'Live Solana cluster shred-version histogram',
         '/rwme': 'Live Solana inflation rewards for multiple addresses in a chosen epoch',
         '/gpmd': 'Live Solana program accounts filtered by memcmp with a data slice',
+        '/vcur': 'Live Solana current vote accounts with activated stake',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1084,7 +1090,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                         ? ['solana', 'inflation', 'rewards', 'epoch']
                                                                                                                                                                                                                         : path === '/gpmd'
                                                                                                                                                                                                                           ? ['solana', 'program', 'memcmp', 'slice']
-                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                          : path === '/vcur'
+                                                                                                                                                                                                                            ? ['solana', 'votes', 'current', 'stake']
+                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2563,6 +2571,24 @@ async function delinquentVoteAccounts() {
   return {
     count: rows.length,
     delinquent: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function currentVoteAccounts() {
+  const res = await rpc('getVoteAccounts', [])
+  const rows = (res.result?.current || []).slice(0, 20).map((row) => ({
+    vote: row.votePubkey ?? null,
+    node: row.nodePubkey ?? null,
+    commission: row.commission ?? null,
+    activatedStake: row.activatedStake ?? 0,
+    lastVote: row.lastVote ?? null,
+    rootSlot: row.rootSlot ?? null,
+  }))
+  return {
+    count: rows.length,
+    activatedStake: rows.reduce((sum, row) => sum + Number(row.activatedStake || 0), 0),
+    current: rows,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -4585,6 +4611,10 @@ const PAID = {
       url.searchParams.get('length'),
     ),
   },
+  '/vcur': {
+    validate() {},
+    run: async () => currentVoteAccounts(),
+  },
 }
 
 function catalogResources() {
@@ -4700,6 +4730,7 @@ function catalogResources() {
     { path: '/nshd', description: 'Live Solana cluster shred-version histogram' },
     { path: '/rwme', description: 'Live Solana inflation rewards for multiple addresses in a chosen epoch' },
     { path: '/gpmd', description: 'Live Solana program accounts filtered by memcmp with a data slice' },
+    { path: '/vcur', description: 'Live Solana current vote accounts with activated stake' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4875,6 +4906,7 @@ const server = createServer(async (req, res) => {
               { name: 'cluster_shred_versions', description: 'Paid Solana cluster shred-version histogram. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'inflation_rewards_many_epoch', description: 'Paid Solana inflation rewards for multiple addresses in a chosen epoch. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, epoch: { type: 'string' } }, required: ['addresses', 'epoch'] } },
               { name: 'program_accounts_memcmp_slice', description: 'Paid Solana program accounts filtered by memcmp with a data slice. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slice: { type: 'string' }, length: { type: 'string' } }, required: ['program', 'offset', 'bytes', 'slice', 'length'] } },
+              { name: 'current_votes', description: 'Paid Solana current vote accounts with activated stake. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -4990,6 +5022,7 @@ const server = createServer(async (req, res) => {
         cluster_shred_versions: '/nshd',
         inflation_rewards_many_epoch: '/rwme',
         program_accounts_memcmp_slice: '/gpmd',
+        current_votes: '/vcur',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
