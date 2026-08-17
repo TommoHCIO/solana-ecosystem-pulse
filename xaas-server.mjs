@@ -157,6 +157,7 @@ const ROUTE_PRICE = {
   '/vlcs': { usdc: '5000', sol: '5000000' },
   '/bhcs': { usdc: '5000', sol: '5000000' },
   '/ffcs': { usdc: '10000', sol: '10000000' },
+  '/slcs': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1040,6 +1041,11 @@ const BAZAAR = {
     lamports: 5000,
     sol: 0.000005,
   }),
+  '/slcs': bazaarExtension({
+    slot: '439000000',
+  }, {
+    current: 439000000,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1204,6 +1210,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/vlcs': 'Live Solana blockhash validity after a minimum context slot',
         '/bhcs': 'Live Solana latest blockhash after a minimum context slot',
         '/ffcs': 'Live Solana fee for a serialized transaction message after a minimum context slot',
+        '/slcs': 'Live Solana current slot after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1489,7 +1496,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                               ? ['solana', 'rpc', 'blockhash', 'fresh']
                                                                                                                                                                                                                                                                                               : path === '/ffcs'
                                                                                                                                                                                                                                                                                                 ? ['solana', 'rpc', 'fee', 'slot']
-                                                                                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                : path === '/slcs'
+                                                                                                                                                                                                                                                                                                  ? ['solana', 'rpc', 'slot', 'fresh']
+                                                                                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2995,6 +3004,16 @@ async function latestBlockhashMinContext(slotRaw) {
 async function currentSlot() {
   const res = await rpc('getSlot', [])
   return {
+    slot: res.result,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function currentSlotMinContext(slotRaw) {
+  const minContextSlot = parseSlot(slotRaw)
+  const res = await rpc('getSlot', [{ minContextSlot }])
+  return {
+    minContextSlot,
     slot: res.result,
     generatedAt: new Date().toISOString(),
   }
@@ -6237,6 +6256,14 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/slcs': {
+    validate(url) {
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => currentSlotMinContext(
+      url.searchParams.get('slot'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6387,6 +6414,7 @@ function catalogResources() {
     { path: '/vlcs', description: 'Live Solana blockhash validity after a minimum context slot' },
     { path: '/bhcs', description: 'Live Solana latest blockhash after a minimum context slot' },
     { path: '/ffcs', description: 'Live Solana fee for a serialized transaction message after a minimum context slot' },
+    { path: '/slcs', description: 'Live Solana current slot after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6597,6 +6625,7 @@ const server = createServer(async (req, res) => {
               { name: 'blockhash_valid_min_context', description: 'Paid Solana isBlockhashValid after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { blockhash: { type: 'string' }, slot: { type: 'string' } }, required: ['blockhash', 'slot'] } },
               { name: 'latest_blockhash_min_context', description: 'Paid Solana latest blockhash after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'fee_for_message_min_context', description: 'Paid Solana getFeeForMessage after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { message: { type: 'string' }, slot: { type: 'string' } }, required: ['message', 'slot'] } },
+              { name: 'current_slot_min_context', description: 'Paid Solana current slot after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
             ],
           },
         })
@@ -6747,6 +6776,7 @@ const server = createServer(async (req, res) => {
         blockhash_valid_min_context: '/vlcs',
         latest_blockhash_min_context: '/bhcs',
         fee_for_message_min_context: '/ffcs',
+        current_slot_min_context: '/slcs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
