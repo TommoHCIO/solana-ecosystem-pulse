@@ -150,6 +150,7 @@ const ROUTE_PRICE = {
   '/gmcs': { usdc: '15000', sol: '15000000' },
   '/gpmc': { usdc: '15000', sol: '15000000' },
   '/gmmc': { usdc: '15000', sol: '15000000' },
+  '/gpsc': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -979,6 +980,16 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/gpsc': bazaarExtension({
+    program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    space: '165',
+    offset: '0',
+    length: '32',
+    slot: '439000000',
+  }, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1136,6 +1147,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/gmcs': 'Live Solana size-filtered program accounts after a minimum context slot',
         '/gpmc': 'Live Solana memcmp-filtered program accounts after a minimum context slot',
         '/gmmc': 'Live Solana size-and-memcmp-filtered program accounts after a minimum context slot',
+        '/gpsc': 'Live Solana size-filtered program account data slices after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1407,7 +1419,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                 ? ['solana', 'rpc', 'memcmp', 'slot']
                                                                                                                                                                                                                                                                                 : path === '/gmmc'
                                                                                                                                                                                                                                                                                   ? ['solana', 'rpc', 'size', 'slot']
-                                                                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                  : path === '/gpsc'
+                                                                                                                                                                                                                                                                                    ? ['solana', 'rpc', 'slice', 'slot']
+                                                                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3445,6 +3459,39 @@ async function programAccountsSlice(programRaw, spaceRaw, offsetRaw, lengthRaw) 
     offset,
     length,
     encoding: 'base64',
+    count: rows.length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function programAccountsSliceMinContext(programRaw, spaceRaw, offsetRaw, lengthRaw, slotRaw) {
+  const program = requirePubkey('program', programRaw)
+  const space = parseSpace(spaceRaw)
+  const { offset, length } = parseDataSlice(offsetRaw, lengthRaw)
+  const minContextSlot = parseSlot(slotRaw)
+  const res = await rpc('getProgramAccounts', [
+    program,
+    {
+      encoding: 'base64',
+      dataSlice: { offset, length },
+      filters: [{ dataSize: space }],
+      minContextSlot,
+    },
+  ])
+  const rows = (Array.isArray(res.result) ? res.result : []).slice(0, 20).map((item) => ({
+    pubkey: item.pubkey,
+    lamports: item.account?.lamports ?? null,
+    owner: item.account?.owner ?? null,
+    data: Array.isArray(item.account?.data) ? item.account.data[0] : null,
+  }))
+  return {
+    program,
+    space,
+    offset,
+    length,
+    encoding: 'base64',
+    minContextSlot,
     count: rows.length,
     accounts: rows,
     generatedAt: new Date().toISOString(),
@@ -5927,6 +5974,21 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/gpsc': {
+    validate(url) {
+      requirePubkey('program', url.searchParams.get('program'))
+      parseSpace(url.searchParams.get('space'))
+      parseDataSlice(url.searchParams.get('offset'), url.searchParams.get('length'))
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => programAccountsSliceMinContext(
+      url.searchParams.get('program'),
+      url.searchParams.get('space'),
+      url.searchParams.get('offset'),
+      url.searchParams.get('length'),
+      url.searchParams.get('slot'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6070,6 +6132,7 @@ function catalogResources() {
     { path: '/gmcs', description: 'Live Solana size-filtered program accounts after a minimum context slot' },
     { path: '/gpmc', description: 'Live Solana memcmp-filtered program accounts after a minimum context slot' },
     { path: '/gmmc', description: 'Live Solana size-and-memcmp-filtered program accounts after a minimum context slot' },
+    { path: '/gpsc', description: 'Live Solana size-filtered program account data slices after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6273,6 +6336,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_accounts_min_context', description: 'Paid Solana size-filtered program accounts after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'space', 'slot'] } },
               { name: 'program_accounts_memcmp_min_context', description: 'Paid Solana memcmp-filtered program accounts after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'offset', 'bytes', 'slot'] } },
               { name: 'program_accounts_size_memcmp_min_context', description: 'Paid Solana size-and-memcmp-filtered program accounts after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'space', 'offset', 'bytes', 'slot'] } },
+              { name: 'program_account_slices_min_context', description: 'Paid Solana size-filtered program account data slices after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'space', 'offset', 'length', 'slot'] } },
             ],
           },
         })
@@ -6416,6 +6480,7 @@ const server = createServer(async (req, res) => {
         program_accounts_min_context: '/gmcs',
         program_accounts_memcmp_min_context: '/gpmc',
         program_accounts_size_memcmp_min_context: '/gmmc',
+        program_account_slices_min_context: '/gpsc',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
