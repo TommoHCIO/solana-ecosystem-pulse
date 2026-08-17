@@ -1,0 +1,15 @@
+{
+  "name": "Solana Pulse XaaS",
+  "description": "Paid Solana and web tools for AI agents. Free sample. x402 on Solana USDC.",
+  "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/",
+  "skills": [
+    { "id": "sample", "name": "sample_pulse", "priceUsdc": 0, "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/sample" },
+    { "id": "quote", "name": "jupiter_quote", "priceUsdc": 0.01, "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/quote" },
+    { "id": "search", "name": "web_search", "priceUsdc": 0.01, "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/search" },
+    { "id": "extract", "name": "extract_url", "priceUsdc": 0.02, "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/extract" },
+    { "id": "license", "name": "license_scan", "priceUsdc": 0.10, "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/license" },
+    { "id": "preflight", "name": "install_preflight", "priceUsdc": 0.15, "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/preflight" }
+  ],
+  "mcp": "https://lobby-laptop-shame-achieved.trycloudflare.com/mcp",
+  "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA"
+}
