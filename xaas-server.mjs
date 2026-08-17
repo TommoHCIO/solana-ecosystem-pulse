@@ -156,6 +156,7 @@ const ROUTE_PRICE = {
   '/tscs': { usdc: '10000', sol: '10000000' },
   '/vlcs': { usdc: '5000', sol: '5000000' },
   '/bhcs': { usdc: '5000', sol: '5000000' },
+  '/ffcs': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1032,6 +1033,13 @@ const BAZAAR = {
     blockhash: '11111111111111111111111111111111',
     lastValidBlockHeight: 0,
   }),
+  '/ffcs': bazaarExtension({
+    message: 'AQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9A',
+    slot: '439000000',
+  }, {
+    lamports: 5000,
+    sol: 0.000005,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1195,6 +1203,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/tscs': 'Live Solana SPL token supply after a minimum context slot',
         '/vlcs': 'Live Solana blockhash validity after a minimum context slot',
         '/bhcs': 'Live Solana latest blockhash after a minimum context slot',
+        '/ffcs': 'Live Solana fee for a serialized transaction message after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1478,7 +1487,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                             ? ['solana', 'rpc', 'blockhash', 'slot']
                                                                                                                                                                                                                                                                                             : path === '/bhcs'
                                                                                                                                                                                                                                                                                               ? ['solana', 'rpc', 'blockhash', 'fresh']
-                                                                                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                              : path === '/ffcs'
+                                                                                                                                                                                                                                                                                                ? ['solana', 'rpc', 'fee', 'slot']
+                                                                                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3821,6 +3832,19 @@ async function feeForMessage(messageRaw) {
   const res = await rpc('getFeeForMessage', [message])
   const lamports = Number(res.result?.value ?? 0)
   return {
+    lamports,
+    sol: lamports / 1e9,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function feeForMessageMinContext(messageRaw, slotRaw) {
+  const message = parseMessage(messageRaw)
+  const minContextSlot = parseSlot(slotRaw)
+  const res = await rpc('getFeeForMessage', [message, { minContextSlot }])
+  const lamports = Number(res.result?.value ?? 0)
+  return {
+    minContextSlot,
     lamports,
     sol: lamports / 1e9,
     generatedAt: new Date().toISOString(),
@@ -6203,6 +6227,16 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/ffcs': {
+    validate(url) {
+      parseMessage(url.searchParams.get('message'))
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => feeForMessageMinContext(
+      url.searchParams.get('message'),
+      url.searchParams.get('slot'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6352,6 +6386,7 @@ function catalogResources() {
     { path: '/tscs', description: 'Live Solana SPL token supply after a minimum context slot' },
     { path: '/vlcs', description: 'Live Solana blockhash validity after a minimum context slot' },
     { path: '/bhcs', description: 'Live Solana latest blockhash after a minimum context slot' },
+    { path: '/ffcs', description: 'Live Solana fee for a serialized transaction message after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6561,6 +6596,7 @@ const server = createServer(async (req, res) => {
               { name: 'token_supply_min_context', description: 'Paid Solana SPL token supply after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' }, slot: { type: 'string' } }, required: ['mint', 'slot'] } },
               { name: 'blockhash_valid_min_context', description: 'Paid Solana isBlockhashValid after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { blockhash: { type: 'string' }, slot: { type: 'string' } }, required: ['blockhash', 'slot'] } },
               { name: 'latest_blockhash_min_context', description: 'Paid Solana latest blockhash after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'fee_for_message_min_context', description: 'Paid Solana getFeeForMessage after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { message: { type: 'string' }, slot: { type: 'string' } }, required: ['message', 'slot'] } },
             ],
           },
         })
@@ -6710,6 +6746,7 @@ const server = createServer(async (req, res) => {
         token_supply_min_context: '/tscs',
         blockhash_valid_min_context: '/vlcs',
         latest_blockhash_min_context: '/bhcs',
+        fee_for_message_min_context: '/ffcs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
