@@ -41,6 +41,7 @@ const ROUTE_PRICE = {
   '/tax': { usdc: '15000', sol: '15000000' },
   '/tps': { usdc: '10000', sol: '10000000' },
   '/rent': { usdc: '10000', sol: '10000000' },
+  '/inflation': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -282,6 +283,12 @@ const BAZAAR = {
     space: 165,
     lamports: 2039280,
   }),
+  '/inflation': bazaarExtension({}, {
+    total: 0.05,
+    validator: 0.047,
+    foundation: 0.003,
+    epoch: 800,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -330,6 +337,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/tax': 'Token-2022 transfer-fee config for a mint',
         '/tps': 'Live Solana TPS from recent performance samples',
         '/rent': 'Minimum lamports for rent exemption by account size',
+        '/inflation': 'Current Solana inflation rate',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -383,7 +391,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                       ? ['solana', 'tps', 'performance', 'cluster']
                                                       : path === '/rent'
                                                         ? ['solana', 'rent', 'exemption', 'account']
-                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                        : path === '/inflation'
+                                                          ? ['solana', 'inflation', 'staking', 'epoch']
+                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -771,6 +781,18 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function inflationRate() {
+  const res = await rpc('getInflationRate', [])
+  const value = res.result || {}
+  return {
+    total: value.total,
+    validator: value.validator,
+    foundation: value.foundation,
+    epoch: value.epoch,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 function parseSpace(spaceRaw) {
   if (spaceRaw === null || spaceRaw === '') {
@@ -1454,6 +1476,10 @@ const PAID = {
     validate(url) { parseSpace(url.searchParams.get('space')) },
     run: async (url) => rentExempt(url.searchParams.get('space') ?? '0'),
   },
+  '/inflation': {
+    validate() {},
+    run: async () => inflationRate(),
+  },
 }
 
 function catalogResources() {
@@ -1488,6 +1514,7 @@ function catalogResources() {
     { path: '/tax', description: 'Token-2022 transfer-fee config. Query: mint' },
     { path: '/tps', description: 'Live Solana TPS from recent performance samples' },
     { path: '/rent', description: 'Minimum lamports for rent exemption. Query: space' },
+    { path: '/inflation', description: 'Current Solana inflation rate' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1579,6 +1606,7 @@ const server = createServer(async (req, res) => {
               { name: 'transfer_fee', description: 'Paid Token-2022 transfer-fee lookup. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'cluster_tps', description: 'Paid Solana TPS snapshot. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'rent_exempt', description: 'Paid rent-exemption lamports by account size. 0.01 USDC.', inputSchema: { type: 'object', properties: { space: { type: 'string' } }, required: ['space'] } },
+              { name: 'inflation_rate', description: 'Paid Solana inflation rate. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1613,6 +1641,7 @@ const server = createServer(async (req, res) => {
         transfer_fee: '/tax',
         cluster_tps: '/tps',
         rent_exempt: '/rent',
+        inflation_rate: '/inflation',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
