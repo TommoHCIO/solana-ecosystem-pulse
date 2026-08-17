@@ -65,6 +65,7 @@ const ROUTE_PRICE = {
   '/gov': { usdc: '5000', sol: '5000000' },
   '/valid': { usdc: '5000', sol: '5000000' },
   '/sched': { usdc: '5000', sol: '5000000' },
+  '/reward': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -408,6 +409,11 @@ const BAZAAR = {
     slotsAssigned: 432000,
     topSlots: 2000,
   }),
+  '/reward': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    amount: 0,
+    epoch: 800,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -480,6 +486,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/gov': 'Live Solana inflation governor parameters',
         '/valid': 'Check whether a Solana blockhash is still valid',
         '/sched': 'Live Solana current-epoch leader schedule summary',
+        '/reward': 'Live Solana inflation reward for a stake or vote address',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -581,7 +588,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                       ? ['solana', 'blockhash', 'valid', 'expiry']
                                                                                                       : path === '/sched'
                                                                                                         ? ['solana', 'leader', 'schedule', 'epoch']
-                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                        : path === '/reward'
+                                                                                                          ? ['solana', 'inflation', 'reward', 'stake']
+                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1204,6 +1213,22 @@ async function blockhashValid(blockhash) {
     blockhash: hash,
     valid: Boolean(res.result?.value),
     commitment: 'processed',
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function inflationReward(address) {
+  const key = requirePubkey('address', address)
+  const res = await rpc('getInflationReward', [[key]])
+  const row = Array.isArray(res.result) ? res.result[0] : null
+  return {
+    address: key,
+    found: Boolean(row),
+    epoch: row?.epoch ?? null,
+    effectiveSlot: row?.effectiveSlot ?? null,
+    amount: row?.amount ?? null,
+    postBalance: row?.postBalance ?? null,
+    commission: row?.commission ?? null,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -2011,6 +2036,10 @@ const PAID = {
     validate() {},
     run: async () => leaderSchedule(),
   },
+  '/reward': {
+    validate(url) { requirePubkey('address', url.searchParams.get('address')) },
+    run: async (url) => inflationReward(url.searchParams.get('address')),
+  },
 }
 
 function catalogResources() {
@@ -2069,6 +2098,7 @@ function catalogResources() {
     { path: '/gov', description: 'Live Solana inflation governor parameters' },
     { path: '/valid', description: 'Check whether a Solana blockhash is still valid' },
     { path: '/sched', description: 'Live Solana current-epoch leader schedule summary' },
+    { path: '/reward', description: 'Live Solana inflation reward for a stake or vote address' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2184,6 +2214,7 @@ const server = createServer(async (req, res) => {
               { name: 'inflation_governor', description: 'Paid Solana inflation governor parameters. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'blockhash_valid', description: 'Paid Solana isBlockhashValid check. 0.005 USDC.', inputSchema: { type: 'object', properties: { blockhash: { type: 'string' } }, required: ['blockhash'] } },
               { name: 'leader_schedule', description: 'Paid Solana current-epoch leader schedule summary. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'inflation_reward', description: 'Paid Solana inflation reward for a stake or vote address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
             ],
           },
         })
@@ -2242,6 +2273,7 @@ const server = createServer(async (req, res) => {
         inflation_governor: '/gov',
         blockhash_valid: '/valid',
         leader_schedule: '/sched',
+        inflation_reward: '/reward',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
