@@ -168,6 +168,7 @@ const ROUTE_PRICE = {
   '/jpos': { usdc: '50000', sol: '50000000' },
   '/wrsk': { usdc: '20000', sol: '20000000' },
   '/jtrd': { usdc: '50000', sol: '50000000' },
+  '/jtip': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1131,6 +1132,13 @@ const BAZAAR = {
     count: 0,
     trades: [],
   }),
+  '/jtip': bazaarExtension({
+    limit: '4',
+  }, {
+    limit: 4,
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1306,6 +1314,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/jpos': 'Live Jupiter perpetual positions for a required wallet address',
         '/wrsk': 'Scored Solana wallet risk from live balance activity and OFAC screen',
         '/jtrd': 'Live Jupiter perpetual trade history for a required wallet address',
+        '/jtip': 'Live Jito block-engine tip accounts for a required account limit',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1613,7 +1622,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                     ? ['solana', 'wallet', 'risk', 'score']
                                                                                                                                                                                                                                                                                                                     : path === '/jtrd'
                                                                                                                                                                                                                                                                                                                       ? ['solana', 'jupiter', 'perps', 'trades']
-                                                                                                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                      : path === '/jtip'
+                                                                                                                                                                                                                                                                                                                        ? ['solana', 'jito', 'tips', 'mev']
+                                                                                                                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -4772,6 +4783,30 @@ async function priorityFees() {
   }
 }
 
+async function jitoTipAccounts(limitRaw) {
+  const limit = parseRequiredLimit(limitRaw, 8)
+  const res = await fetch('https://mainnet.block-engine.jito.wtf/api/v1/getTipAccounts', {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTipAccounts', params: [] }),
+    signal: AbortSignal.timeout(15000),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error || !Array.isArray(body.result)) {
+    const err = new Error((body.error && body.error.message) || 'jito tip accounts failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const accounts = body.result.slice(0, limit)
+  return {
+    limit,
+    count: accounts.length,
+    accounts,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 function parseFeeAccounts(raw) {
   if (raw === null || raw === '') {
     const err = new Error('accounts query param is required')
@@ -6695,6 +6730,12 @@ const PAID = {
     },
     run: async (url) => jupiterPerpTrades(url.searchParams.get('address')),
   },
+  '/jtip': {
+    validate(url) {
+      parseRequiredLimit(url.searchParams.get('limit'), 8)
+    },
+    run: async (url) => jitoTipAccounts(url.searchParams.get('limit')),
+  },
 }
 
 function catalogResources() {
@@ -6856,6 +6897,7 @@ function catalogResources() {
     { path: '/jpos', description: 'Live Jupiter perpetual positions for a required wallet address' },
     { path: '/wrsk', description: 'Scored Solana wallet risk from live balance activity and OFAC screen' },
     { path: '/jtrd', description: 'Live Jupiter perpetual trade history for a required wallet address' },
+    { path: '/jtip', description: 'Live Jito block-engine tip accounts for a required account limit' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7077,6 +7119,7 @@ const server = createServer(async (req, res) => {
               { name: 'jupiter_perp_positions', description: 'Paid Jupiter perpetual positions for a required wallet address. 0.05 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'wallet_risk_score', description: 'Paid scored Solana wallet risk from live balance activity and OFAC screen. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'jupiter_perp_trades', description: 'Paid Jupiter perpetual trade history for a required wallet address. 0.05 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
+              { name: 'jito_tip_accounts', description: 'Paid Jito block-engine tip accounts for a required account limit. 0.01 USDC.', inputSchema: { type: 'object', properties: { limit: { type: 'string' } }, required: ['limit'] } },
             ],
           },
         })
@@ -7238,6 +7281,7 @@ const server = createServer(async (req, res) => {
         jupiter_perp_positions: '/jpos',
         wallet_risk_score: '/wrsk',
         jupiter_perp_trades: '/jtrd',
+        jito_tip_accounts: '/jtip',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
