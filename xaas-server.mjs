@@ -106,6 +106,7 @@ const ROUTE_PRICE = {
   '/ncw': { usdc: '15000', sol: '15000000' },
   '/bpid': { usdc: '10000', sol: '10000000' },
   '/rewe': { usdc: '10000', sol: '10000000' },
+  '/lsid': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -654,6 +655,10 @@ const BAZAAR = {
     found: false,
     amount: null,
   }),
+  '/lsid': bazaarExtension({ identity: 'Certusm1sa411sMpV9FPqU5dXAYhmmhygvxJ23S6hJ24' }, {
+    slots: 0,
+    firstSlots: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -767,6 +772,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/ncw': 'Live Solana non-circulating largest native SOL accounts',
         '/bpid': 'Live Solana block production for one validator identity',
         '/rewe': 'Live Solana inflation reward for a chosen epoch',
+        '/lsid': 'Live Solana leader-schedule slots for one validator identity',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -950,7 +956,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                         ? ['solana', 'validator', 'production', 'identity']
                                                                                                                                                                                         : path === '/rewe'
                                                                                                                                                                                           ? ['solana', 'reward', 'inflation', 'epoch']
-                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                          : path === '/lsid'
+                                                                                                                                                                                            ? ['solana', 'leader', 'schedule', 'identity']
+                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1947,6 +1955,21 @@ async function leaderSchedule() {
     slotsAssigned,
     topSlots: rows[0]?.slots ?? 0,
     top: rows.slice(0, 8),
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function leaderScheduleByIdentity(identityRaw) {
+  const identity = requirePubkey('identity', identityRaw)
+  const res = await rpc('getLeaderSchedule', [null, { identity }])
+  const map = res.result && typeof res.result === 'object' ? res.result : {}
+  const slots = Array.isArray(map[identity]) ? map[identity] : []
+  return {
+    identity,
+    found: slots.length > 0,
+    slots: slots.length,
+    firstSlots: slots.slice(0, 16),
+    lastSlot: slots.length ? slots[slots.length - 1] : null,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -3830,6 +3853,10 @@ const PAID = {
     },
     run: async (url) => inflationRewardEpoch(url.searchParams.get('address'), url.searchParams.get('epoch')),
   },
+  '/lsid': {
+    validate(url) { requirePubkey('identity', url.searchParams.get('identity')) },
+    run: async (url) => leaderScheduleByIdentity(url.searchParams.get('identity')),
+  },
 }
 
 function catalogResources() {
@@ -3929,6 +3956,7 @@ function catalogResources() {
     { path: '/ncw', description: 'Live Solana non-circulating largest native SOL accounts' },
     { path: '/bpid', description: 'Live Solana block production for one validator identity' },
     { path: '/rewe', description: 'Live Solana inflation reward for a chosen epoch' },
+    { path: '/lsid', description: 'Live Solana leader-schedule slots for one validator identity' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4088,6 +4116,7 @@ const server = createServer(async (req, res) => {
               { name: 'noncirculating_whales', description: 'Paid Solana non-circulating largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'block_production_identity', description: 'Paid Solana block production for one validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
               { name: 'inflation_reward_epoch', description: 'Paid Solana inflation reward for a chosen epoch. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, epoch: { type: 'string' } }, required: ['address', 'epoch'] } },
+              { name: 'leader_schedule_identity', description: 'Paid Solana leader-schedule slots for one validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
             ],
           },
         })
@@ -4187,6 +4216,7 @@ const server = createServer(async (req, res) => {
         noncirculating_whales: '/ncw',
         block_production_identity: '/bpid',
         inflation_reward_epoch: '/rewe',
+        leader_schedule_identity: '/lsid',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
