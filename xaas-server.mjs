@@ -89,6 +89,7 @@ const ROUTE_PRICE = {
   '/hist': { usdc: '10000', sol: '10000000' },
   '/stk': { usdc: '10000', sol: '10000000' },
   '/vac': { usdc: '10000', sol: '10000000' },
+  '/mdt': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -563,6 +564,12 @@ const BAZAAR = {
     activatedStake: 0,
     delinquent: false,
   }),
+  '/mdt': bazaarExtension({ mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, {
+    name: 'USD Coin',
+    symbol: 'USDC',
+    decimals: 6,
+    supply: '0',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -659,6 +666,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/hist': 'Live Solana paginated signatures for an address with a before cursor',
         '/stk': 'Live Solana parsed stake account delegation and authorities',
         '/vac': 'Live Solana vote-account commission identity and activated stake',
+        '/mdt': 'Live Solana mint name symbol decimals supply and authorities',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -808,7 +816,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                       ? ['solana', 'stake', 'delegation', 'account']
                                                                                                                                                       : path === '/vac'
                                                                                                                                                         ? ['solana', 'vote', 'commission', 'validator']
-                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                        : path === '/mdt'
+                                                                                                                                                          ? ['solana', 'token', 'metadata', 'mint']
+                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2104,6 +2114,38 @@ async function tokenSupply(mint) {
   }
 }
 
+async function mintMetadata(mintRaw) {
+  const mint = requirePubkey('mint', mintRaw)
+  const [supplyRes, accountRes] = await Promise.all([
+    rpc('getTokenSupply', [mint]),
+    rpc('getAccountInfo', [mint, { encoding: 'jsonParsed', commitment: 'confirmed' }]),
+  ])
+  const value = accountRes.result?.value
+  if (!value) {
+    const err = new Error('mint not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const parsed = value.data?.parsed?.info || {}
+  const ext = parsed.extensions || []
+  const tokenMetadata = (Array.isArray(ext) ? ext : []).find((item) => item.extension === 'tokenMetadata')?.state || {}
+  const supply = supplyRes.result?.value || {}
+  return {
+    mint,
+    owner: value.owner,
+    name: tokenMetadata.name || parsed.name || null,
+    symbol: tokenMetadata.symbol || parsed.symbol || null,
+    uri: tokenMetadata.uri || parsed.uri || null,
+    decimals: supply.decimals ?? parsed.decimals ?? null,
+    supply: supply.uiAmountString || supply.amount || null,
+    mintAuthority: parsed.mintAuthority ?? null,
+    freezeAuthority: parsed.freezeAuthority ?? null,
+    isInitialized: parsed.isInitialized ?? null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function priorityFees() {
   const res = await rpc('getRecentPrioritizationFees', [[]])
   const values = (res.result || []).map((row) => Number(row.prioritizationFee)).filter((n) => Number.isFinite(n)).sort((a, b) => a - b)
@@ -3007,6 +3049,10 @@ const PAID = {
     validate(url) { requirePubkey('vote', url.searchParams.get('vote')) },
     run: async (url) => voteAccount(url.searchParams.get('vote')),
   },
+  '/mdt': {
+    validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
+    run: async (url) => mintMetadata(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -3089,6 +3135,7 @@ function catalogResources() {
     { path: '/hist', description: 'Live Solana paginated signatures for an address with a before cursor' },
     { path: '/stk', description: 'Live Solana parsed stake account delegation and authorities' },
     { path: '/vac', description: 'Live Solana vote-account commission identity and activated stake' },
+    { path: '/mdt', description: 'Live Solana mint name symbol decimals supply and authorities' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3228,6 +3275,7 @@ const server = createServer(async (req, res) => {
               { name: 'signature_history', description: 'Paid Solana paginated signatures with a before cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, before: { type: 'string' } }, required: ['address'] } },
               { name: 'stake_account', description: 'Paid Solana parsed stake account delegation. 0.01 USDC.', inputSchema: { type: 'object', properties: { stake: { type: 'string' } }, required: ['stake'] } },
               { name: 'vote_account', description: 'Paid Solana vote-account commission and identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { vote: { type: 'string' } }, required: ['vote'] } },
+              { name: 'mint_metadata', description: 'Paid Solana mint name symbol decimals and authorities. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -3310,6 +3358,7 @@ const server = createServer(async (req, res) => {
         signature_history: '/hist',
         stake_account: '/stk',
         vote_account: '/vac',
+        mint_metadata: '/mdt',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
