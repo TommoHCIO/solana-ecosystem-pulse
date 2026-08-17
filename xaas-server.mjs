@@ -175,6 +175,7 @@ const ROUTE_PRICE = {
   '/rcur': { usdc: '20000', sol: '20000000' },
   '/rdap': { usdc: '10000', sol: '10000000' },
   '/nft': { usdc: '10000', sol: '10000000' },
+  '/dex': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1195,6 +1196,13 @@ const BAZAAR = {
     floorPriceSol: null,
     listedCount: null,
   }),
+  '/dex': bazaarExtension({
+    mint: 'So11111111111111111111111111111111111111112',
+  }, {
+    mint: 'So11111111111111111111111111111111111111112',
+    priceUsd: null,
+    liquidityUsd: null,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1377,6 +1385,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/rcur': 'Live Jupiter recurring DCA orders for a required wallet and status',
         '/rdap': 'Live RDAP registration data for a required domain, IP, or ASN',
         '/nft': 'Live Solana NFT collection floor and stats for a required Magic Eden symbol',
+        '/dex': 'Live Solana token market data (price, liquidity, volume, change) for a required mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1698,7 +1707,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                                   ? ['dns', 'whois', 'rdap', 'domain']
                                                                                                                                                                                                                                                                                                                                   : path === '/nft'
                                                                                                                                                                                                                                                                                                                                     ? ['solana', 'nft', 'floor', 'collection']
-                                                                                                                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                                    : path === '/dex'
+                                                                                                                                                                                                                                                                                                                                      ? ['solana', 'token', 'price', 'market-data']
+                                                                                                                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2958,6 +2969,49 @@ async function jupiterPerpTrades(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     trades: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function dexTokenMarket(mintRaw) {
+  const mint = requirePubkey('mint', mintRaw)
+  const dsUrl = 'https://api.dexscreener.com/token-pairs/v1/solana/' + encodeURIComponent(mint)
+  const res = await fetch(dsUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  if (res.status === 429) {
+    const err = new Error('upstream rate limit; retry shortly')
+    err.status = 503
+    err.code = 'upstream_rate_limited'
+    throw err
+  }
+  const pairs = await res.json().catch(() => null)
+  if (!res.ok || !Array.isArray(pairs) || pairs.length === 0) {
+    const err = new Error('no DEX pairs found for mint')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  // Choose the deepest USD-liquidity pair as the reference market.
+  const best = pairs.reduce((a, b) => {
+    const la = (a && a.liquidity && a.liquidity.usd) || 0
+    const lb = (b && b.liquidity && b.liquidity.usd) || 0
+    return lb > la ? b : a
+  })
+  const num = (v) => (v === null || v === undefined ? null : Number(v))
+  return {
+    mint,
+    pairAddress: best.pairAddress ?? null,
+    dexId: best.dexId ?? null,
+    baseSymbol: (best.baseToken && best.baseToken.symbol) ?? null,
+    quoteSymbol: (best.quoteToken && best.quoteToken.symbol) ?? null,
+    priceUsd: num(best.priceUsd),
+    priceNative: num(best.priceNative),
+    liquidityUsd: num(best.liquidity && best.liquidity.usd),
+    volume24hUsd: num(best.volume && best.volume.h24),
+    priceChange24h: num(best.priceChange && best.priceChange.h24),
+    fdvUsd: num(best.fdv),
+    marketCapUsd: num(best.marketCap),
+    pairCount: pairs.length,
+    source: 'dexscreener',
     generatedAt: new Date().toISOString(),
   }
 }
@@ -7090,6 +7144,12 @@ const PAID = {
     },
     run: async (url) => nftCollectionStats(url.searchParams.get('symbol')),
   },
+  '/dex': {
+    validate(url) {
+      requirePubkey('mint', url.searchParams.get('mint'))
+    },
+    run: async (url) => dexTokenMarket(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -7258,6 +7318,7 @@ function catalogResources() {
     { path: '/rcur', description: 'Live Jupiter recurring DCA orders for a required wallet and status' },
     { path: '/rdap', description: 'Live RDAP registration data for a required domain, IP, or ASN' },
     { path: '/nft', description: 'Live Solana NFT collection floor and stats for a required Magic Eden symbol' },
+    { path: '/dex', description: 'Live Solana token market data (price, liquidity, volume, change) for a required mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7486,6 +7547,7 @@ const server = createServer(async (req, res) => {
               { name: 'jupiter_recurring_orders', description: 'Paid Jupiter recurring DCA orders for a required wallet and status. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, status: { type: 'string' } }, required: ['address', 'status'] } },
               { name: 'rdap_lookup', description: 'Paid RDAP registration data for a required domain, IP, or ASN. 0.01 USDC. kind=domain|ip|asn, q=value.', inputSchema: { type: 'object', properties: { kind: { type: 'string' }, q: { type: 'string' } }, required: ['kind', 'q'] } },
               { name: 'nft_collection_stats', description: 'Paid Solana NFT collection floor and stats for a required Magic Eden symbol. 0.01 USDC.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } },
+              { name: 'dex_token_market', description: 'Paid Solana token market data (price, liquidity, 24h volume, price change) for a required mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -7654,6 +7716,7 @@ const server = createServer(async (req, res) => {
         jupiter_recurring_orders: '/rcur',
         rdap_lookup: '/rdap',
         nft_collection_stats: '/nft',
+        dex_token_market: '/dex',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
