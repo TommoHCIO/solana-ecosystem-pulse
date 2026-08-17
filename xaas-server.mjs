@@ -151,6 +151,7 @@ const ROUTE_PRICE = {
   '/gpmc': { usdc: '15000', sol: '15000000' },
   '/gmmc': { usdc: '15000', sol: '15000000' },
   '/gpsc': { usdc: '15000', sol: '15000000' },
+  '/gpms': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -990,6 +991,17 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/gpms': bazaarExtension({
+    program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    offset: '0',
+    bytes: '11111111111111111111111111111111',
+    slice: '0',
+    length: '32',
+    slot: '439000000',
+  }, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1148,6 +1160,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/gpmc': 'Live Solana memcmp-filtered program accounts after a minimum context slot',
         '/gmmc': 'Live Solana size-and-memcmp-filtered program accounts after a minimum context slot',
         '/gpsc': 'Live Solana size-filtered program account data slices after a minimum context slot',
+        '/gpms': 'Live Solana memcmp-filtered program account data slices after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1421,7 +1434,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                   ? ['solana', 'rpc', 'size', 'slot']
                                                                                                                                                                                                                                                                                   : path === '/gpsc'
                                                                                                                                                                                                                                                                                     ? ['solana', 'rpc', 'slice', 'slot']
-                                                                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                    : path === '/gpms'
+                                                                                                                                                                                                                                                                                      ? ['solana', 'rpc', 'memcmp', 'slice']
+                                                                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3676,6 +3691,41 @@ async function programAccountsMemcmpSlice(programRaw, offsetRaw, bytesRaw, slice
     slice,
     length,
     encoding: 'base64',
+    count: rows.length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function programAccountsMemcmpSliceMinContext(programRaw, offsetRaw, bytesRaw, sliceRaw, lengthRaw, slotRaw) {
+  const program = requirePubkey('program', programRaw)
+  const offset = parseOffset(offsetRaw)
+  const bytes = parseMemcmpBytes(bytesRaw)
+  const { offset: slice, length } = parseDataSlice(sliceRaw, lengthRaw)
+  const minContextSlot = parseSlot(slotRaw)
+  const res = await rpc('getProgramAccounts', [
+    program,
+    {
+      encoding: 'base64',
+      dataSlice: { offset: slice, length },
+      filters: [{ memcmp: { offset, bytes } }],
+      minContextSlot,
+    },
+  ])
+  const rows = (Array.isArray(res.result) ? res.result : []).slice(0, 20).map((item) => ({
+    pubkey: item.pubkey,
+    lamports: item.account?.lamports ?? null,
+    owner: item.account?.owner ?? null,
+    data: Array.isArray(item.account?.data) ? item.account.data[0] : null,
+  }))
+  return {
+    program,
+    offset,
+    bytes,
+    slice,
+    length,
+    encoding: 'base64',
+    minContextSlot,
     count: rows.length,
     accounts: rows,
     generatedAt: new Date().toISOString(),
@@ -5989,6 +6039,23 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/gpms': {
+    validate(url) {
+      requirePubkey('program', url.searchParams.get('program'))
+      parseOffset(url.searchParams.get('offset'))
+      parseMemcmpBytes(url.searchParams.get('bytes'))
+      parseDataSlice(url.searchParams.get('slice'), url.searchParams.get('length'))
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => programAccountsMemcmpSliceMinContext(
+      url.searchParams.get('program'),
+      url.searchParams.get('offset'),
+      url.searchParams.get('bytes'),
+      url.searchParams.get('slice'),
+      url.searchParams.get('length'),
+      url.searchParams.get('slot'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6133,6 +6200,7 @@ function catalogResources() {
     { path: '/gpmc', description: 'Live Solana memcmp-filtered program accounts after a minimum context slot' },
     { path: '/gmmc', description: 'Live Solana size-and-memcmp-filtered program accounts after a minimum context slot' },
     { path: '/gpsc', description: 'Live Solana size-filtered program account data slices after a minimum context slot' },
+    { path: '/gpms', description: 'Live Solana memcmp-filtered program account data slices after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6337,6 +6405,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_accounts_memcmp_min_context', description: 'Paid Solana memcmp-filtered program accounts after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'offset', 'bytes', 'slot'] } },
               { name: 'program_accounts_size_memcmp_min_context', description: 'Paid Solana size-and-memcmp-filtered program accounts after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'space', 'offset', 'bytes', 'slot'] } },
               { name: 'program_account_slices_min_context', description: 'Paid Solana size-filtered program account data slices after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'space', 'offset', 'length', 'slot'] } },
+              { name: 'program_accounts_memcmp_slice_min_context', description: 'Paid Solana memcmp-filtered program account data slices after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slice: { type: 'string' }, length: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'offset', 'bytes', 'slice', 'length', 'slot'] } },
             ],
           },
         })
@@ -6481,6 +6550,7 @@ const server = createServer(async (req, res) => {
         program_accounts_memcmp_min_context: '/gpmc',
         program_accounts_size_memcmp_min_context: '/gmmc',
         program_account_slices_min_context: '/gpsc',
+        program_accounts_memcmp_slice_min_context: '/gpms',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
