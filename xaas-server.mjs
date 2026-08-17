@@ -17,6 +17,7 @@ const ROUTE_PRICE = {
   '/license': { usdc: '100000', sol: '100000000' },
   '/preflight': { usdc: '150000', sol: '150000000' },
   '/extract': { usdc: '20000', sol: '20000000' },
+  '/search': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -147,6 +148,11 @@ const BAZAAR = {
     title: 'Solana Ecosystem Pulse',
     text: 'Free no-key Solana network report.',
   }),
+  '/search': bazaarExtension({ q: 'solana tps' }, {
+    q: 'solana tps',
+    count: 3,
+    results: [{ title: 'example', url: 'https://example.com', snippet: '...' }],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -173,6 +179,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/license': 'License-compliance verdict for a package list',
         '/preflight': 'Install-safety preflight for a package list',
         '/extract': 'Fetch a public URL and return title plus plain text',
+        '/search': 'Web search results for a query',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -182,7 +189,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
           ? ['license', 'npm', 'security', 'preflight']
           : path === '/extract'
             ? ['extract', 'fetch', 'html', 'search']
-            : ['solana', 'rpc', 'balance', 'chain-data'],
+            : path === '/search'
+              ? ['search', 'web', 'ddg']
+              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -441,6 +450,35 @@ function licenseScan(raw) {
   }
 }
 
+async function webSearch(q) {
+  const url = 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(q)
+  const res = await fetch(url, {
+    headers: { accept: 'text/html', 'user-agent': 'solana-pulse-xaas' },
+    signal: AbortSignal.timeout(12000),
+  })
+  const html = await res.text()
+  const results = []
+  const re = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi
+  let match
+  while ((match = re.exec(html)) && results.length < 8) {
+    results.push({
+      url: match[1],
+      title: match[2].replace(/<[^>]+>/g, '').trim(),
+      snippet: match[3].replace(/<[^>]+>/g, '').trim(),
+    })
+  }
+  if (results.length === 0) {
+    const loose = [...html.matchAll(/<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)]
+    for (const item of loose) {
+      const href = item[1]
+      if (/duckduckgo|javascript:/.test(href)) continue
+      results.push({ url: href, title: item[2].replace(/<[^>]+>/g, '').trim(), snippet: '' })
+      if (results.length >= 8) break
+    }
+  }
+  return { q, count: results.length, results, generatedAt: new Date().toISOString() }
+}
+
 async function extractPage(target) {
   const res = await fetch(target, {
     headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'solana-pulse-xaas' },
@@ -527,6 +565,10 @@ const PAID = {
     },
     run: async (url) => extractPage(url.searchParams.get('url')),
   },
+  '/search': {
+    validate(url) { requireText('q', url.searchParams.get('q')) },
+    run: async (url) => webSearch(url.searchParams.get('q')),
+  },
 }
 
 function catalogResources() {
@@ -539,6 +581,7 @@ function catalogResources() {
     { path: '/license', description: 'License-compliance verdict. Query: packages=name@version,...' },
     { path: '/preflight', description: 'Install-safety preflight. Query: packages=name@version,...' },
     { path: '/extract', description: 'Fetch a public HTTPS URL and return title plus plain text. Query: url' },
+    { path: '/search', description: 'Web search. Query: q' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -602,6 +645,7 @@ const server = createServer(async (req, res) => {
               { name: 'license_scan', description: 'Paid license heuristic. 0.10 USDC.', inputSchema: { type: 'object', properties: { packages: { type: 'string' } }, required: ['packages'] } },
               { name: 'install_preflight', description: 'Paid install-safety heuristic. 0.15 USDC.', inputSchema: { type: 'object', properties: { packages: { type: 'string' } }, required: ['packages'] } },
               { name: 'extract_url', description: 'Paid HTTPS fetch + text extract. 0.02 USDC.', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
+              { name: 'web_search', description: 'Paid web search. 0.01 USDC.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
             ],
           },
         })
@@ -614,6 +658,7 @@ const server = createServer(async (req, res) => {
         license_scan: '/license',
         install_preflight: '/preflight',
         extract_url: '/extract',
+        web_search: '/search',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
@@ -664,6 +709,7 @@ const server = createServer(async (req, res) => {
           licenseUsdc: '0.10',
           preflightUsdc: '0.15',
           extractUsdc: '0.02',
+          searchUsdc: '0.01',
         },
         catalog: '/.well-known/x402.json',
         openapi: '/openapi.json',

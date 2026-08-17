@@ -1,0 +1,11 @@
+{
+  "name": "solana-pulse-xaas",
+  "displayName": "Solana Pulse XaaS",
+  "description": "Remote MCP for Jupiter quotes, HTTPS extract, and package preflight. Paid via x402 on Solana USDC.",
+  "version": "0.26.1",
+  "mcpServers": {
+    "solana-pulse-xaas": {
+      "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/mcp"
+    }
+  }
+}
