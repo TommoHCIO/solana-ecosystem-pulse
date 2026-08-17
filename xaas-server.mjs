@@ -118,6 +118,7 @@ const ROUTE_PRICE = {
   '/scmt': { usdc: '10000', sol: '10000000' },
   '/lsep': { usdc: '10000', sol: '10000000' },
   '/bpir': { usdc: '10000', sol: '10000000' },
+  '/rewm': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -714,6 +715,10 @@ const BAZAAR = {
     leaderSlots: 0,
     skipped: 0,
   }),
+  '/rewm': bazaarExtension({ addresses: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    count: 0,
+    found: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -839,6 +844,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/scmt': 'Live Solana current-slot vote commitment lockouts',
         '/lsep': 'Live Solana leader-schedule summary for the epoch of a slot',
         '/bpir': 'Live Solana block production for one validator in a slot range',
+        '/rewm': 'Live Solana inflation rewards for multiple stake or vote addresses',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1046,7 +1052,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                 ? ['solana', 'leader', 'schedule', 'epoch']
                                                                                                                                                                                                                 : path === '/bpir'
                                                                                                                                                                                                                   ? ['solana', 'blocks', 'identity', 'range']
-                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                  : path === '/rewm'
+                                                                                                                                                                                                                    ? ['solana', 'inflation', 'rewards', 'batch']
+                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3004,6 +3012,27 @@ async function inflationRewardEpoch(addressRaw, epochRaw) {
   }
 }
 
+async function inflationRewardsMany(addressesRaw) {
+  const addresses = parseAddresses(addressesRaw)
+  const res = await rpc('getInflationReward', [addresses])
+  const rows = (Array.isArray(res.result) ? res.result : []).map((row, index) => ({
+    address: addresses[index],
+    found: Boolean(row),
+    epoch: row?.epoch ?? null,
+    effectiveSlot: row?.effectiveSlot ?? null,
+    amount: row?.amount ?? null,
+    postBalance: row?.postBalance ?? null,
+    commission: row?.commission ?? null,
+  }))
+  return {
+    count: rows.length,
+    found: rows.filter((row) => row.found).length,
+    amount: rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0),
+    rewards: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function inflationGovernor() {
   const res = await rpc('getInflationGovernor', [])
   const value = res.result || {}
@@ -4398,6 +4427,10 @@ const PAID = {
     },
     run: async (url) => blockProductionByIdentityRange(url.searchParams.get('identity'), url.searchParams.get('first'), url.searchParams.get('last')),
   },
+  '/rewm': {
+    validate(url) { parseAddresses(url.searchParams.get('addresses')) },
+    run: async (url) => inflationRewardsMany(url.searchParams.get('addresses')),
+  },
 }
 
 function catalogResources() {
@@ -4509,6 +4542,7 @@ function catalogResources() {
     { path: '/scmt', description: 'Live Solana current-slot vote commitment lockouts' },
     { path: '/lsep', description: 'Live Solana leader-schedule summary for the epoch of a slot' },
     { path: '/bpir', description: 'Live Solana block production for one validator in a slot range' },
+    { path: '/rewm', description: 'Live Solana inflation rewards for multiple stake or vote addresses' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4680,6 +4714,7 @@ const server = createServer(async (req, res) => {
               { name: 'slot_commitment', description: 'Paid Solana current-slot vote commitment lockouts. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } } } },
               { name: 'leader_schedule_epoch', description: 'Paid Solana leader-schedule summary for the epoch of a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'block_production_identity_range', description: 'Paid Solana block production for one validator in a slot range. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' }, first: { type: 'string' }, last: { type: 'string' } }, required: ['identity', 'first', 'last'] } },
+              { name: 'inflation_rewards_many', description: 'Paid Solana inflation rewards for multiple stake or vote addresses. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' } }, required: ['addresses'] } },
             ],
           },
         })
@@ -4791,6 +4826,7 @@ const server = createServer(async (req, res) => {
         slot_commitment: '/scmt',
         leader_schedule_epoch: '/lsep',
         block_production_identity_range: '/bpir',
+        inflation_rewards_many: '/rewm',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
