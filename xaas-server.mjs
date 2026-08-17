@@ -22,6 +22,7 @@ const ROUTE_PRICE = {
   '/risk': { usdc: '20000', sol: '20000000' },
   '/price': { usdc: '5000', sol: '5000000' },
   '/wallet': { usdc: '10000', sol: '10000000' },
+  '/sigs': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -179,6 +180,11 @@ const BAZAAR = {
     sol: 0.008616398,
     tokenCount: 2,
   }),
+  '/sigs': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    count: 5,
+    signatures: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -210,6 +216,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/risk': 'Mint/freeze authority and holder-concentration risk for a Solana mint',
         '/price': 'USD price for a Solana mint via Jupiter',
         '/wallet': 'Native SOL plus token holdings for a Solana wallet',
+        '/sigs': 'Recent signatures for a Solana address',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -229,7 +236,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                     ? ['price', 'jupiter', 'solana', 'usd']
                     : path === '/wallet'
                       ? ['wallet', 'portfolio', 'solana', 'holdings']
-                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                      : path === '/sigs'
+                        ? ['signatures', 'history', 'solana', 'tx']
+                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -541,6 +550,19 @@ async function extractPage(target) {
   }
 }
 
+async function recentSigs(address) {
+  const limitRaw = Number(arguments[1] || 10)
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 25) : 10
+  const res = await rpc('getSignaturesForAddress', [address, { limit }])
+  const rows = (res.result || []).map((item) => ({
+    signature: item.signature,
+    slot: item.slot,
+    err: item.err || null,
+    iso: item.blockTime ? new Date(item.blockTime * 1000).toISOString() : null,
+  }))
+  return { address, count: rows.length, signatures: rows, generatedAt: new Date().toISOString() }
+}
+
 async function walletSnapshot(address) {
   const [balance, tokens] = await Promise.all([solBalance(address), solTokens(address)])
   return {
@@ -715,6 +737,10 @@ const PAID = {
     validate(url) { requirePubkey('address', url.searchParams.get('address')) },
     run: async (url) => walletSnapshot(url.searchParams.get('address')),
   },
+  '/sigs': {
+    validate(url) { requirePubkey('address', url.searchParams.get('address')) },
+    run: async (url) => recentSigs(url.searchParams.get('address'), url.searchParams.get('limit')),
+  },
 }
 
 function catalogResources() {
@@ -732,6 +758,7 @@ function catalogResources() {
     { path: '/risk', description: 'Mint/freeze authority and holder concentration. Query: mint' },
     { path: '/price', description: 'USD price for a Solana mint via Jupiter. Query: mint' },
     { path: '/wallet', description: 'Native SOL plus token holdings. Query: address' },
+    { path: '/sigs', description: 'Recent signatures for a Solana address. Query: address, optional limit' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -806,6 +833,7 @@ const server = createServer(async (req, res) => {
               { name: 'mint_risk', description: 'Paid Solana mint risk: authorities + holder concentration. 0.02 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'mint_price', description: 'Paid Solana mint USD price via Jupiter. 0.005 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'wallet_holdings', description: 'Paid Solana wallet SOL + token holdings. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
+              { name: 'recent_sigs', description: 'Paid recent Solana signatures for an address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, limit: { type: 'string' } }, required: ['address'] } },
             ],
           },
         })
@@ -823,6 +851,7 @@ const server = createServer(async (req, res) => {
         mint_risk: '/risk',
         mint_price: '/price',
         wallet_holdings: '/wallet',
+        recent_sigs: '/sigs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
