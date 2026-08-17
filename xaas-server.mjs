@@ -46,6 +46,7 @@ const ROUTE_PRICE = {
   '/votes': { usdc: '10000', sol: '10000000' },
   '/whales': { usdc: '15000', sol: '15000000' },
   '/blocks': { usdc: '10000', sol: '10000000' },
+  '/nodes': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -311,6 +312,11 @@ const BAZAAR = {
     slotsInEpoch: 432000,
     skipRate: 0.02,
   }),
+  '/nodes': bazaarExtension({}, {
+    count: 1800,
+    rpc: 400,
+    gossip: 1800,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -364,6 +370,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/votes': 'Current and delinquent Solana vote-account counts',
         '/whales': 'Largest native SOL accounts',
         '/blocks': 'Current-epoch Solana block production skip rate',
+        '/nodes': 'Live Solana gossip cluster node counts',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -427,7 +434,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                 ? ['solana', 'whales', 'largest', 'accounts']
                                                                 : path === '/blocks'
                                                                   ? ['solana', 'blocks', 'skip-rate', 'epoch']
-                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                  : path === '/nodes'
+                                                                    ? ['solana', 'cluster', 'gossip', 'nodes']
+                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -815,6 +824,18 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function clusterNodes() {
+  const res = await rpc('getClusterNodes', [])
+  const nodes = res.result || []
+  return {
+    count: nodes.length,
+    rpc: nodes.filter((row) => Boolean(row.rpc)).length,
+    gossip: nodes.filter((row) => Boolean(row.gossip)).length,
+    tpu: nodes.filter((row) => Boolean(row.tpu)).length,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function blockProduction() {
   const res = await rpc('getBlockProduction', [])
@@ -1591,6 +1612,10 @@ const PAID = {
     validate() {},
     run: async () => blockProduction(),
   },
+  '/nodes': {
+    validate() {},
+    run: async () => clusterNodes(),
+  },
 }
 
 function catalogResources() {
@@ -1630,6 +1655,7 @@ function catalogResources() {
     { path: '/votes', description: 'Current and delinquent Solana vote-account counts' },
     { path: '/whales', description: 'Largest native SOL accounts' },
     { path: '/blocks', description: 'Current-epoch Solana block production skip rate' },
+    { path: '/nodes', description: 'Live Solana gossip cluster node counts' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1726,6 +1752,7 @@ const server = createServer(async (req, res) => {
               { name: 'vote_counts', description: 'Paid Solana vote-account counts. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'largest_accounts', description: 'Paid largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'block_production', description: 'Paid Solana block-production skip rate. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'cluster_nodes', description: 'Paid Solana gossip cluster node counts. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1765,6 +1792,7 @@ const server = createServer(async (req, res) => {
         vote_counts: '/votes',
         largest_accounts: '/whales',
         block_production: '/blocks',
+        cluster_nodes: '/nodes',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
