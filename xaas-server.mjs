@@ -134,6 +134,7 @@ const ROUTE_PRICE = {
   '/mcsu': { usdc: '10000', sol: '10000000' },
   '/owns': { usdc: '10000', sol: '10000000' },
   '/mcsb': { usdc: '10000', sol: '10000000' },
+  '/ownps': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -831,6 +832,15 @@ const BAZAAR = {
     count: 0,
     signatures: [],
   }),
+  '/ownps': bazaarExtension({
+    owner: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    offset: '0',
+    length: '32',
+  }, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -972,6 +982,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/mcsu': 'Live Solana signatures after a minimum context slot stopped at an until cursor',
         '/owns': 'Live Solana token accounts for a wallet and mint with a data slice',
         '/mcsb': 'Live Solana signatures after a minimum context slot starting from a before cursor',
+        '/ownps': 'Live Solana token accounts for a wallet and token program with a data slice',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1211,7 +1222,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                 ? ['solana', 'tokens', 'mint', 'slice']
                                                                                                                                                                                                                                                 : path === '/mcsb'
                                                                                                                                                                                                                                                   ? ['solana', 'signatures', 'slot', 'before']
-                                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                  : path === '/ownps'
+                                                                                                                                                                                                                                                    ? ['solana', 'tokens', 'program', 'slice']
+                                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2052,6 +2065,33 @@ async function tokenAccountsByOwnerProgram(ownerRaw, programRaw) {
     program,
     count: rows.length,
     tokens: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function tokenAccountsByOwnerProgramSlice(ownerRaw, programRaw, offsetRaw, lengthRaw) {
+  const owner = requirePubkey('owner', ownerRaw)
+  const program = requirePubkey('program', programRaw)
+  const { offset, length } = parseDataSlice(offsetRaw, lengthRaw)
+  const res = await rpc('getTokenAccountsByOwner', [
+    owner,
+    { programId: program },
+    { encoding: 'base64', dataSlice: { offset, length } },
+  ])
+  const rows = (res.result?.value ?? []).slice(0, 20).map((item) => ({
+    account: item.pubkey,
+    lamports: item.account?.lamports ?? null,
+    owner: item.account?.owner ?? null,
+    data: Array.isArray(item.account?.data) ? item.account.data[0] : null,
+  }))
+  return {
+    owner,
+    program,
+    offset,
+    length,
+    encoding: 'base64',
+    count: rows.length,
+    accounts: rows,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -5103,6 +5143,19 @@ const PAID = {
       url.searchParams.get('before'),
     ),
   },
+  '/ownps': {
+    validate(url) {
+      requirePubkey('owner', url.searchParams.get('owner'))
+      requirePubkey('program', url.searchParams.get('program'))
+      parseDataSlice(url.searchParams.get('offset'), url.searchParams.get('length'))
+    },
+    run: async (url) => tokenAccountsByOwnerProgramSlice(
+      url.searchParams.get('owner'),
+      url.searchParams.get('program'),
+      url.searchParams.get('offset'),
+      url.searchParams.get('length'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -5230,6 +5283,7 @@ function catalogResources() {
     { path: '/mcsu', description: 'Live Solana signatures after a minimum context slot stopped at an until cursor' },
     { path: '/owns', description: 'Live Solana token accounts for a wallet and mint with a data slice' },
     { path: '/mcsb', description: 'Live Solana signatures after a minimum context slot starting from a before cursor' },
+    { path: '/ownps', description: 'Live Solana token accounts for a wallet and token program with a data slice' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -5417,6 +5471,7 @@ const server = createServer(async (req, res) => {
               { name: 'signatures_min_context_until', description: 'Paid Solana signatures after a minimum context slot stopped at an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'slot', 'until'] } },
               { name: 'token_accounts_owner_mint_slice', description: 'Paid Solana token accounts for a wallet and mint with a data slice. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['owner', 'mint', 'offset', 'length'] } },
               { name: 'signatures_min_context_before', description: 'Paid Solana signatures after a minimum context slot starting from a before cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' }, before: { type: 'string' } }, required: ['address', 'slot', 'before'] } },
+              { name: 'token_accounts_owner_program_slice', description: 'Paid Solana token accounts for a wallet and token program with a data slice. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, program: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['owner', 'program', 'offset', 'length'] } },
             ],
           },
         })
@@ -5544,6 +5599,7 @@ const server = createServer(async (req, res) => {
         signatures_min_context_until: '/mcsu',
         token_accounts_owner_mint_slice: '/owns',
         signatures_min_context_before: '/mcsb',
+        token_accounts_owner_program_slice: '/ownps',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
