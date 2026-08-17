@@ -91,6 +91,7 @@ const ROUTE_PRICE = {
   '/vac': { usdc: '10000', sol: '10000000' },
   '/mdt': { usdc: '10000', sol: '10000000' },
   '/ata': { usdc: '10000', sol: '10000000' },
+  '/jts': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -576,6 +577,11 @@ const BAZAAR = {
     exists: false,
     lamports: 0,
   }),
+  '/jts': bazaarExtension({ q: 'USDC' }, {
+    query: 'USDC',
+    count: 0,
+    tokens: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -674,6 +680,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/vac': 'Live Solana vote-account commission identity and activated stake',
         '/mdt': 'Live Solana mint name symbol decimals supply and authorities',
         '/ata': 'Live Solana associated token account address and existence',
+        '/jts': 'Live Jupiter token search by name symbol or mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -827,7 +834,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                           ? ['solana', 'token', 'metadata', 'mint']
                                                                                                                                                           : path === '/ata'
                                                                                                                                                             ? ['solana', 'token', 'ata', 'associated']
-                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                            : path === '/jts'
+                                                                                                                                                              ? ['solana', 'jupiter', 'token', 'search']
+                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1400,6 +1409,39 @@ async function jupiterQuote(url) {
     slippageBps: body.slippageBps,
     priceImpactPct: body.priceImpactPct,
     routePlan: (body.routePlan || []).slice(0, 8),
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function jupiterTokenSearch(queryRaw) {
+  const query = requireText('q', queryRaw)
+  if (query.length > 64) {
+    const err = new Error('q must be 64 characters or fewer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const searchUrl = 'https://lite-api.jup.ag/tokens/v2/search?query=' + encodeURIComponent(query)
+  const res = await fetch(searchUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => null)
+  if (!res.ok || !Array.isArray(body)) {
+    const err = new Error((body && body.error) || 'jupiter token search failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  return {
+    query,
+    count: body.length,
+    tokens: body.slice(0, 8).map((row) => ({
+      id: row.id || row.address || null,
+      name: row.name || null,
+      symbol: row.symbol || null,
+      decimals: row.decimals ?? null,
+      organicScore: row.organicScore ?? row.organicScoreLabel ?? null,
+      usdPrice: row.usdPrice ?? null,
+      mcap: row.mcap ?? row.fdv ?? null,
+    })),
     generatedAt: new Date().toISOString(),
   }
 }
@@ -3189,6 +3231,10 @@ const PAID = {
     },
     run: async (url) => associatedTokenAccount(url.searchParams.get('owner'), url.searchParams.get('mint')),
   },
+  '/jts': {
+    validate(url) { requireText('q', url.searchParams.get('q')) },
+    run: async (url) => jupiterTokenSearch(url.searchParams.get('q')),
+  },
 }
 
 function catalogResources() {
@@ -3273,6 +3319,7 @@ function catalogResources() {
     { path: '/vac', description: 'Live Solana vote-account commission identity and activated stake' },
     { path: '/mdt', description: 'Live Solana mint name symbol decimals supply and authorities' },
     { path: '/ata', description: 'Live Solana associated token account address and existence' },
+    { path: '/jts', description: 'Live Jupiter token search by name symbol or mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3414,6 +3461,7 @@ const server = createServer(async (req, res) => {
               { name: 'vote_account', description: 'Paid Solana vote-account commission and identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { vote: { type: 'string' } }, required: ['vote'] } },
               { name: 'mint_metadata', description: 'Paid Solana mint name symbol decimals and authorities. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'associated_token_account', description: 'Paid Solana ATA derive and existence check. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' } }, required: ['owner', 'mint'] } },
+              { name: 'jupiter_token_search', description: 'Paid Jupiter token search by name symbol or mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
             ],
           },
         })
@@ -3498,6 +3546,7 @@ const server = createServer(async (req, res) => {
         vote_account: '/vac',
         mint_metadata: '/mdt',
         associated_token_account: '/ata',
+        jupiter_token_search: '/jts',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
