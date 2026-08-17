@@ -170,6 +170,7 @@ const ROUTE_PRICE = {
   '/jtrd': { usdc: '50000', sol: '50000000' },
   '/jtip': { usdc: '10000', sol: '10000000' },
   '/auth': { usdc: '15000', sol: '15000000' },
+  '/pump': { usdc: '20000', sol: '20000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1149,6 +1150,13 @@ const BAZAAR = {
     updateAuthority: null,
     verdict: 'ok',
   }),
+  '/pump': bazaarExtension({
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  }, {
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    complete: false,
+    creator: null,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1326,6 +1334,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/jtrd': 'Live Jupiter perpetual trade history for a required wallet address',
         '/jtip': 'Live Jito block-engine tip accounts for a required account limit',
         '/auth': 'Live Solana mint freeze and update authorities for a required mint',
+        '/pump': 'Live Pump.fun coin bonding-curve status for a required mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1637,7 +1646,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                         ? ['solana', 'jito', 'tips', 'mev']
                                                                                                                                                                                                                                                                                                                         : path === '/auth'
                                                                                                                                                                                                                                                                                                                           ? ['solana', 'mint', 'authority', 'deployer']
-                                                                                                                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                          : path === '/pump'
+                                                                                                                                                                                                                                                                                                                            ? ['solana', 'pumpfun', 'bonding', 'curve']
+                                                                                                                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -4802,6 +4813,35 @@ async function mintAuthorities(mintRaw) {
   }
 }
 
+async function pumpCoin(mintRaw) {
+  const mint = requirePubkey('mint', mintRaw)
+  const pumpUrl = 'https://frontend-api-v3.pump.fun/coins/' + encodeURIComponent(mint)
+  const res = await fetch(pumpUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error || !body.mint) {
+    const err = new Error(body.error || body.message || 'pump.fun coin not found')
+    err.status = res.status === 404 ? 404 : 502
+    err.code = res.status === 404 ? 'not_found' : 'upstream_error'
+    throw err
+  }
+  return {
+    mint: body.mint,
+    name: body.name ?? null,
+    symbol: body.symbol ?? null,
+    creator: body.creator ?? null,
+    complete: Boolean(body.complete),
+    marketCap: body.market_cap ?? null,
+    usdMarketCap: body.usd_market_cap ?? null,
+    virtualSolReserves: body.virtual_sol_reserves ?? null,
+    virtualTokenReserves: body.virtual_token_reserves ?? null,
+    bondingCurve: body.bonding_curve ?? null,
+    raydiumPool: body.raydium_pool ?? null,
+    program: body.program ?? null,
+    createdAt: body.created_timestamp ? new Date(body.created_timestamp).toISOString() : null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function priorityFees() {
   const res = await rpc('getRecentPrioritizationFees', [[]])
   const values = (res.result || []).map((row) => Number(row.prioritizationFee)).filter((n) => Number.isFinite(n)).sort((a, b) => a - b)
@@ -6776,6 +6816,12 @@ const PAID = {
     },
     run: async (url) => mintAuthorities(url.searchParams.get('mint')),
   },
+  '/pump': {
+    validate(url) {
+      requirePubkey('mint', url.searchParams.get('mint'))
+    },
+    run: async (url) => pumpCoin(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -6939,6 +6985,7 @@ function catalogResources() {
     { path: '/jtrd', description: 'Live Jupiter perpetual trade history for a required wallet address' },
     { path: '/jtip', description: 'Live Jito block-engine tip accounts for a required account limit' },
     { path: '/auth', description: 'Live Solana mint freeze and update authorities for a required mint' },
+    { path: '/pump', description: 'Live Pump.fun coin bonding-curve status for a required mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7162,6 +7209,7 @@ const server = createServer(async (req, res) => {
               { name: 'jupiter_perp_trades', description: 'Paid Jupiter perpetual trade history for a required wallet address. 0.05 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'jito_tip_accounts', description: 'Paid Jito block-engine tip accounts for a required account limit. 0.01 USDC.', inputSchema: { type: 'object', properties: { limit: { type: 'string' } }, required: ['limit'] } },
               { name: 'mint_authorities', description: 'Paid Solana mint freeze and update authorities for a required mint. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'pumpfun_coin', description: 'Paid Pump.fun coin bonding-curve status for a required mint. 0.02 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -7325,6 +7373,7 @@ const server = createServer(async (req, res) => {
         jupiter_perp_trades: '/jtrd',
         jito_tip_accounts: '/jtip',
         mint_authorities: '/auth',
+        pumpfun_coin: '/pump',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
