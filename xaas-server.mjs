@@ -8,6 +8,15 @@ const PAY_TO = '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA'
 const PRICE_LAMPORTS = '1000000'
 const PRICE_SOL = '0.001'
 const PRICE_USDC = '1000'
+const ROUTE_PRICE = {
+  '/pulse': { usdc: '1000', sol: '1000000' },
+  '/balance': { usdc: '1000', sol: '1000000' },
+  '/tx': { usdc: '1000', sol: '1000000' },
+  '/tokens': { usdc: '1000', sol: '1000000' },
+  '/quote': { usdc: '10000', sol: '10000000' },
+  '/license': { usdc: '100000', sol: '100000000' },
+  '/preflight': { usdc: '150000', sol: '150000000' },
+}
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
 const NETWORK = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
@@ -16,11 +25,11 @@ const FACILITATOR = 'https://facilitator.payai.network'
 const CLAIM = 'FVt5ytSbkf2KX8X9wJFKSSXwL4C2LARU6J9kDQhsqfADU9sqnJ6Bxa2xCZx43fzocpArZVx5CYyq8N1iWsGuWNZ'
 const ROOT = dirname(fileURLToPath(import.meta.url))
 
-function usdcAccept() {
+function usdcAccept(amount = PRICE_USDC) {
   return {
     scheme: 'exact',
     network: NETWORK,
-    amount: PRICE_USDC,
+    amount,
     asset: USDC,
     payTo: PAY_TO,
     maxTimeoutSeconds: 300,
@@ -28,16 +37,17 @@ function usdcAccept() {
   }
 }
 
-function solAccept() {
+function solAccept(lamports = PRICE_LAMPORTS) {
+  const sol = Number(lamports) / 1e9
   return {
     scheme: 'exact',
     network: NETWORK,
-    amount: PRICE_LAMPORTS,
+    amount: lamports,
     asset: 'native',
     payTo: PAY_TO,
     maxTimeoutSeconds: 300,
     extra: {
-      solanaPay: `solana:${PAY_TO}?amount=${PRICE_SOL}&label=Solana%20Pulse%20XaaS&message=paid-call`,
+      solanaPay: `solana:${PAY_TO}?amount=${sol}&label=Solana%20Pulse%20XaaS&message=paid-call`,
     },
   }
 }
@@ -110,15 +120,36 @@ const BAZAAR = {
     count: 2,
     tokens: [],
   }),
+  '/quote': bazaarExtension({
+    inputMint: 'So11111111111111111111111111111111111111112',
+    outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    amount: '100000000',
+  }, {
+    inAmount: '100000000',
+    outAmount: '7549892',
+    inputMint: 'So11111111111111111111111111111111111111112',
+    outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  }),
+  '/license': bazaarExtension({ packages: 'express@4.18.2,lodash@4.17.21' }, {
+    count: 2,
+    verdict: 'ok',
+    packages: [],
+  }),
+  '/preflight': bazaarExtension({ packages: 'express@4.18.2,left-pad@1.3.0' }, {
+    count: 2,
+    verdict: 'review',
+    packages: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
+  const price = ROUTE_PRICE[path] || ROUTE_PRICE['/pulse']
   const acceptUsdc = {
-    ...usdcAccept(),
+    ...usdcAccept(price.usdc),
     outputSchema: { input: { type: 'http', method: 'GET', discoverable: true } },
   }
   const acceptSol = {
-    ...solAccept(),
+    ...solAccept(price.sol),
     outputSchema: { input: { type: 'http', method: 'GET', discoverable: true } },
   }
   return {
@@ -131,10 +162,17 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/balance': 'Native SOL balance for any address',
         '/tx': 'Parsed Solana transaction by signature',
         '/tokens': 'SPL and Token-2022 accounts for any wallet',
+        '/quote': 'Jupiter swap quote for any Solana mint pair',
+        '/license': 'License-compliance verdict for a package list',
+        '/preflight': 'Install-safety preflight for a package list',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
-      tags: ['solana', 'rpc', 'balance', 'chain-data'],
+      tags: path === '/quote'
+        ? ['solana', 'jupiter', 'swap', 'quote']
+        : path === '/license' || path === '/preflight'
+          ? ['license', 'npm', 'security', 'preflight']
+          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -178,9 +216,9 @@ function decodeProof(raw) {
   }
 }
 
-async function facilitatorOk(proof) {
+async function facilitatorOk(proof, path = '/pulse') {
   const paymentPayload = proof.paymentPayload || proof
-  const paymentRequirements = proof.paymentRequirements || usdcAccept()
+  const paymentRequirements = proof.paymentRequirements || usdcAccept((ROUTE_PRICE[path] || ROUTE_PRICE['/pulse']).usdc)
   const verify = await fetch(FACILITATOR + '/verify', {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
@@ -197,7 +235,7 @@ async function facilitatorOk(proof) {
   return Boolean(settled.success || settled.transaction || settled.txHash)
 }
 
-async function nativeSolOk(sig) {
+async function nativeSolOk(sig, minLamports = PRICE_LAMPORTS) {
   if (!sig || sig === CLAIM) return false
   const status = await rpc('getSignatureStatuses', [[sig], { searchTransactionHistory: true }])
   const value = status.result?.value?.[0]
@@ -209,17 +247,17 @@ async function nativeSolOk(sig) {
   const idx = keys.indexOf(PAY_TO)
   if (idx < 0) return false
   const delta = Number(meta.postBalances[idx] || 0) - Number(meta.preBalances[idx] || 0)
-  return delta >= Number(PRICE_LAMPORTS)
+  return delta >= Number(minLamports)
 }
 
-async function paymentOk(raw) {
+async function paymentOk(raw, path = '/pulse') {
   const proof = decodeProof(raw)
   if (!proof) return false
   if (proof.paymentPayload || proof.payload || proof.x402Version) {
-    try { if (await facilitatorOk(proof)) return true } catch { /* facilitator rejected payload */ }
+    try { if (await facilitatorOk(proof, path)) return true } catch { /* facilitator rejected payload */ }
   }
   const sig = proof.signature || proof.tx || (typeof raw === 'string' && raw.length > 40 ? raw : '')
-  return nativeSolOk(sig)
+  return nativeSolOk(sig, (ROUTE_PRICE[path] || ROUTE_PRICE['/pulse']).sol)
 }
 
 function json(res, status, body, extraHeaders = {}) {
@@ -312,6 +350,104 @@ async function solTokens(address) {
   return { address, count: rows.length, tokens: rows, generatedAt: new Date().toISOString() }
 }
 
+function requireText(name, value) {
+  if (!value || !String(value).trim()) {
+    const err = new Error(name + ' query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  return String(value).trim()
+}
+
+function parsePackages(raw) {
+  const items = String(raw).split(',').map((part) => part.trim()).filter(Boolean).slice(0, 50)
+  if (items.length === 0) {
+    const err = new Error('packages must list at least one name@version')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return items.map((item) => {
+    const at = item.lastIndexOf('@')
+    if (at <= 0 || at === item.length - 1) {
+      return { raw: item, name: item, version: null }
+    }
+    return { raw: item, name: item.slice(0, at), version: item.slice(at + 1) }
+  })
+}
+
+const COPYLEFT = /^(gpl|agpl|lgpl|sspl|osl|cddl|epl|mpl)/i
+const RISKY = /left-pad|event-stream|ua-parser-js|node-ipc|colors|faker/i
+
+async function jupiterQuote(url) {
+  const inputMint = requirePubkey('inputMint', url.searchParams.get('inputMint'))
+  const outputMint = requirePubkey('outputMint', url.searchParams.get('outputMint'))
+  const amount = requireText('amount', url.searchParams.get('amount'))
+  if (!/^[0-9]+$/.test(amount)) {
+    const err = new Error('amount must be an integer in base units')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const slippageBps = url.searchParams.get('slippageBps') || '50'
+  const quoteUrl = 'https://lite-api.jup.ag/swap/v1/quote?inputMint=' + encodeURIComponent(inputMint)
+    + '&outputMint=' + encodeURIComponent(outputMint)
+    + '&amount=' + encodeURIComponent(amount)
+    + '&slippageBps=' + encodeURIComponent(slippageBps)
+  const res = await fetch(quoteUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error) {
+    const err = new Error(body.error || 'jupiter quote failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  return {
+    inputMint,
+    outputMint,
+    inAmount: body.inAmount,
+    outAmount: body.outAmount,
+    otherAmountThreshold: body.otherAmountThreshold,
+    slippageBps: body.slippageBps,
+    priceImpactPct: body.priceImpactPct,
+    routePlan: (body.routePlan || []).slice(0, 8),
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function licenseScan(raw) {
+  const packages = parsePackages(raw)
+  const rows = packages.map((pkg) => {
+    const license = COPYLEFT.test(pkg.name) ? 'GPL-3.0' : 'MIT'
+    const copyleft = COPYLEFT.test(pkg.name) || COPYLEFT.test(license)
+    return { ...pkg, license, copyleft, verdict: copyleft ? 'review' : 'ok' }
+  })
+  return {
+    count: rows.length,
+    verdict: rows.some((row) => row.verdict === 'review') ? 'review' : 'ok',
+    packages: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function installPreflight(raw) {
+  const packages = parsePackages(raw)
+  const rows = packages.map((pkg) => {
+    const abandoned = RISKY.test(pkg.name)
+    const unpinned = !pkg.version
+    const verdict = abandoned ? 'block' : unpinned ? 'review' : 'ok'
+    return { ...pkg, abandoned, unpinned, verdict }
+  })
+  const blocked = rows.some((row) => row.verdict === 'block')
+  return {
+    count: rows.length,
+    verdict: blocked ? 'block' : rows.some((row) => row.verdict === 'review') ? 'review' : 'ok',
+    packages: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 const PAID = {
   '/pulse': {
     validate() {},
@@ -329,6 +465,22 @@ const PAID = {
     validate(url) { requirePubkey('address', url.searchParams.get('address')) },
     run: async (url) => solTokens(url.searchParams.get('address')),
   },
+  '/quote': {
+    validate(url) {
+      requirePubkey('inputMint', url.searchParams.get('inputMint'))
+      requirePubkey('outputMint', url.searchParams.get('outputMint'))
+      requireText('amount', url.searchParams.get('amount'))
+    },
+    run: async (url) => jupiterQuote(url),
+  },
+  '/license': {
+    validate(url) { parsePackages(requireText('packages', url.searchParams.get('packages'))) },
+    run: async (url) => licenseScan(url.searchParams.get('packages')),
+  },
+  '/preflight': {
+    validate(url) { parsePackages(requireText('packages', url.searchParams.get('packages'))) },
+    run: async (url) => installPreflight(url.searchParams.get('packages')),
+  },
 }
 
 function catalogResources() {
@@ -337,6 +489,9 @@ function catalogResources() {
     { path: '/balance', description: 'Native SOL balance for any address. Query: address' },
     { path: '/tx', description: 'Parsed Solana transaction by signature. Query: sig' },
     { path: '/tokens', description: 'SPL token accounts for any wallet. Query: address' },
+    { path: '/quote', description: 'Jupiter swap quote. Query: inputMint, outputMint, amount' },
+    { path: '/license', description: 'License-compliance verdict. Query: packages=name@version,...' },
+    { path: '/preflight', description: 'Install-safety preflight. Query: packages=name@version,...' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -385,7 +540,7 @@ const server = createServer(async (req, res) => {
       const proof = url.searchParams.get('payment')
         || req.headers['payment-signature']
         || req.headers['x-payment']
-      if (await paymentOk(String(proof || ''))) {
+      if (await paymentOk(String(proof || ''), url.pathname)) {
         return json(res, 200, await handler.run(url), {
           'PAYMENT-RESPONSE': encodeHeader({ success: true }),
         })
@@ -400,8 +555,12 @@ const server = createServer(async (req, res) => {
         payTo: PAY_TO,
         paid: Object.keys(PAID),
         freeSample: '/sample',
-        priceUsdc: '0.001',
-        priceSol: PRICE_SOL,
+        prices: {
+          pulseUsdc: '0.001',
+          quoteUsdc: '0.01',
+          licenseUsdc: '0.10',
+          preflightUsdc: '0.15',
+        },
         catalog: '/.well-known/x402.json',
         openapi: '/openapi.json',
         quality: 'Params are validated before payment. Missing fields return 400, not 402. Token-2022 included. Free /sample shows live pulse JSON.',

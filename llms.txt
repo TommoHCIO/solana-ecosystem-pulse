@@ -14,7 +14,13 @@ Inspect quality first: GET /sample is free and returns live slot/epoch JSON.
 
 Paid routes validate query params *before* charging. Missing/invalid address returns 400, not 402. `/tokens` includes Token-2022.
 
-Live HTTP 402 endpoints. Agents on PayAI pay Solana USDC (`EPjFWdd…Dt1v`), 0.001 USDC (`1000` atomic). Native SOL 0.001 also accepted.
+Higher-priced routes now live. PayAI top prices are $0.10–$0.15 for license/package preflight. Pulse at $0.001 cannot reach 100 SOL.
+
+- GET /quote?inputMint=&outputMint=&amount=  0.01 USDC  Jupiter swap quote
+- GET /license?packages=name@version,...     0.10 USDC  license heuristic
+- GET /preflight?packages=name@version,...   0.15 USDC  install-safety heuristic
+
+License/preflight are static heuristics, not a law firm. Params still validate before 402.
 
 - GET /pulse
 - GET /balance?address=
