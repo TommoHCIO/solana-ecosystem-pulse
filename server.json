@@ -1,0 +1,13 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.tommohcio/solana-pulse-xaas",
+  "description": "Solana Jupiter quotes and package preflight for AI agents. Free sample. Paid x402 on Solana USDC.",
+  "title": "Solana Pulse XaaS",
+  "version": "0.26.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://lobby-laptop-shame-achieved.trycloudflare.com/mcp"
+    }
+  ]
+}
