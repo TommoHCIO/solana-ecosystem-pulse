@@ -86,6 +86,7 @@ const ROUTE_PRICE = {
   '/brw': { usdc: '10000', sol: '10000000' },
   '/xfer': { usdc: '15000', sol: '15000000' },
   '/own': { usdc: '10000', sol: '10000000' },
+  '/hist': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -544,6 +545,11 @@ const BAZAAR = {
     amount: '0',
     accounts: 0,
   }),
+  '/hist': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA', before: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW' }, {
+    count: 0,
+    before: null,
+    signatures: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -637,6 +643,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/brw': 'Live Solana getBlock reward rows for a slot',
         '/xfer': 'Live Solana parsed SOL and SPL token transfers for a signature',
         '/own': 'Live Solana SPL token balance for a wallet and mint',
+        '/hist': 'Live Solana paginated signatures for an address with a before cursor',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -780,7 +787,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                 ? ['solana', 'token', 'transfers', 'parsed']
                                                                                                                                                 : path === '/own'
                                                                                                                                                   ? ['solana', 'token', 'owner', 'mint']
-                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                  : path === '/hist'
+                                                                                                                                                    ? ['solana', 'signatures', 'history', 'before']
+                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2446,6 +2455,27 @@ async function recentSigs(address) {
   return { address, count: rows.length, signatures: rows, generatedAt: new Date().toISOString() }
 }
 
+async function signatureHistory(addressRaw, beforeRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const opts = { limit: 20 }
+  if (beforeRaw !== null && beforeRaw !== '') opts.before = requireSig('before', beforeRaw)
+  const res = await rpc('getSignaturesForAddress', [address, opts])
+  const rows = (res.result || []).map((item) => ({
+    signature: item.signature,
+    slot: item.slot,
+    err: item.err || null,
+    iso: item.blockTime ? new Date(item.blockTime * 1000).toISOString() : null,
+  }))
+  return {
+    address,
+    before: opts.before || null,
+    count: rows.length,
+    next: rows.length ? rows[rows.length - 1].signature : null,
+    signatures: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function walletSnapshot(address) {
   const [balance, tokens] = await Promise.all([solBalance(address), solTokens(address)])
   return {
@@ -2888,6 +2918,14 @@ const PAID = {
     },
     run: async (url) => tokenBalanceByOwnerMint(url.searchParams.get('owner'), url.searchParams.get('mint')),
   },
+  '/hist': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+      const before = url.searchParams.get('before')
+      if (before !== null && before !== '') requireSig('before', before)
+    },
+    run: async (url) => signatureHistory(url.searchParams.get('address'), url.searchParams.get('before')),
+  },
 }
 
 function catalogResources() {
@@ -2967,6 +3005,7 @@ function catalogResources() {
     { path: '/brw', description: 'Live Solana getBlock reward rows for a slot' },
     { path: '/xfer', description: 'Live Solana parsed SOL and SPL token transfers for a signature' },
     { path: '/own', description: 'Live Solana SPL token balance for a wallet and mint' },
+    { path: '/hist', description: 'Live Solana paginated signatures for an address with a before cursor' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3103,6 +3142,7 @@ const server = createServer(async (req, res) => {
               { name: 'block_rewards', description: 'Paid Solana getBlock reward rows for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'parsed_transfers', description: 'Paid Solana parsed SOL and SPL transfers for a signature. 0.015 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
               { name: 'owner_mint_balance', description: 'Paid Solana SPL token balance for a wallet and mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' } }, required: ['owner', 'mint'] } },
+              { name: 'signature_history', description: 'Paid Solana paginated signatures with a before cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, before: { type: 'string' } }, required: ['address'] } },
             ],
           },
         })
@@ -3182,6 +3222,7 @@ const server = createServer(async (req, res) => {
         block_rewards: '/brw',
         parsed_transfers: '/xfer',
         owner_mint_balance: '/own',
+        signature_history: '/hist',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
