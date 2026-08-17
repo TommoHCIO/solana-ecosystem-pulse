@@ -128,6 +128,7 @@ const ROUTE_PRICE = {
   '/gpmm': { usdc: '15000', sol: '15000000' },
   '/lsie': { usdc: '10000', sol: '10000000' },
   '/ownp': { usdc: '10000', sol: '10000000' },
+  '/delm': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -782,6 +783,13 @@ const BAZAAR = {
     count: 0,
     tokens: [],
   }),
+  '/delm': bazaarExtension({
+    delegate: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  }, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -917,6 +925,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/gpmm': 'Live Solana program accounts filtered by dataSize and memcmp',
         '/lsie': 'Live Solana leader-schedule slots for one identity in the epoch of a slot',
         '/ownp': 'Live Solana token accounts for a wallet filtered by one token program',
+        '/delm': 'Live Solana token accounts by approved delegate filtered by mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1144,7 +1153,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                     ? ['solana', 'leader', 'identity', 'epoch']
                                                                                                                                                                                                                                     : path === '/ownp'
                                                                                                                                                                                                                                       ? ['solana', 'tokens', 'owner', 'program']
-                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                      : path === '/delm'
+                                                                                                                                                                                                                                        ? ['solana', 'tokens', 'delegate', 'mint']
+                                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1817,6 +1828,30 @@ async function tokenAccountsByDelegate(delegateRaw) {
   }))
   return {
     delegate,
+    count: rows.length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function tokenAccountsByDelegateMint(delegateRaw, mintRaw) {
+  const delegate = requirePubkey('delegate', delegateRaw)
+  const mint = requirePubkey('mint', mintRaw)
+  const res = await rpc('getTokenAccountsByDelegate', [
+    delegate,
+    { mint },
+    { encoding: 'jsonParsed' },
+  ])
+  const rows = (res.result?.value ?? []).slice(0, 20).map((item) => ({
+    pubkey: item.pubkey,
+    mint: item.account.data.parsed?.info?.mint,
+    amount: item.account.data.parsed?.info?.tokenAmount?.uiAmountString,
+    owner: item.account.data.parsed?.info?.owner,
+    program: item.account.owner,
+  }))
+  return {
+    delegate,
+    mint,
     count: rows.length,
     accounts: rows,
     generatedAt: new Date().toISOString(),
@@ -4824,6 +4859,13 @@ const PAID = {
     },
     run: async (url) => tokenAccountsByOwnerProgram(url.searchParams.get('owner'), url.searchParams.get('program')),
   },
+  '/delm': {
+    validate(url) {
+      requirePubkey('delegate', url.searchParams.get('delegate'))
+      requirePubkey('mint', url.searchParams.get('mint'))
+    },
+    run: async (url) => tokenAccountsByDelegateMint(url.searchParams.get('delegate'), url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -4945,6 +4987,7 @@ function catalogResources() {
     { path: '/gpmm', description: 'Live Solana program accounts filtered by dataSize and memcmp' },
     { path: '/lsie', description: 'Live Solana leader-schedule slots for one identity in the epoch of a slot' },
     { path: '/ownp', description: 'Live Solana token accounts for a wallet filtered by one token program' },
+    { path: '/delm', description: 'Live Solana token accounts by approved delegate filtered by mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -5126,6 +5169,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_accounts_size_memcmp', description: 'Paid Solana program accounts filtered by dataSize and memcmp. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' } }, required: ['program', 'space', 'offset', 'bytes'] } },
               { name: 'leader_schedule_identity_epoch', description: 'Paid Solana leader-schedule slots for one identity in the epoch of a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' }, slot: { type: 'string' } }, required: ['identity', 'slot'] } },
               { name: 'token_accounts_owner_program', description: 'Paid Solana token accounts for a wallet filtered by one token program. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, program: { type: 'string' } }, required: ['owner', 'program'] } },
+              { name: 'token_accounts_delegate_mint', description: 'Paid Solana token accounts by approved delegate filtered by mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' }, mint: { type: 'string' } }, required: ['delegate', 'mint'] } },
             ],
           },
         })
@@ -5247,6 +5291,7 @@ const server = createServer(async (req, res) => {
         program_accounts_size_memcmp: '/gpmm',
         leader_schedule_identity_epoch: '/lsie',
         token_accounts_owner_program: '/ownp',
+        token_accounts_delegate_mint: '/delm',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
