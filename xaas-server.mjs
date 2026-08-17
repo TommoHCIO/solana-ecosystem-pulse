@@ -33,6 +33,7 @@ const ROUTE_PRICE = {
   '/units': { usdc: '5000', sol: '5000000' },
   '/isbn': { usdc: '3000', sol: '3000000' },
   '/semver': { usdc: '3000', sol: '3000000' },
+  '/mime': { usdc: '3000', sol: '3000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -238,6 +239,10 @@ const BAZAAR = {
     b: '1.3.0',
     cmp: -1,
   }),
+  '/mime': bazaarExtension({ ext: 'pdf' }, {
+    ext: 'pdf',
+    mime: 'application/pdf',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -278,6 +283,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/units': 'Convert metric and imperial units',
         '/isbn': 'Validate ISBN-10/13 and convert between formats',
         '/semver': 'Compare two SemVer versions',
+        '/mime': 'Look up MIME type from a file extension',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -315,7 +321,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                       ? ['isbn', 'book', 'validate', 'checksum']
                                       : path === '/semver'
                                         ? ['semver', 'version', 'compare', 'npm']
-                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                        : path === '/mime'
+                                          ? ['mime', 'extension', 'file', 'type']
+                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -668,6 +676,33 @@ const UNIT_TO_SI = {
   c: { dim: 'temp' },
   f: { dim: 'temp' },
   k: { dim: 'temp' },
+}
+
+const MIME_BY_EXT = {
+  html: 'text/html', htm: 'text/html', css: 'text/css', js: 'text/javascript', mjs: 'text/javascript',
+  json: 'application/json', xml: 'application/xml', txt: 'text/plain', csv: 'text/csv', md: 'text/markdown',
+  pdf: 'application/pdf', zip: 'application/zip', gz: 'application/gzip', tar: 'application/x-tar',
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  svg: 'image/svg+xml', ico: 'image/x-icon', mp3: 'audio/mpeg', wav: 'audio/wav', mp4: 'video/mp4',
+  webm: 'video/webm', wasm: 'application/wasm', woff2: 'font/woff2', ttf: 'font/ttf',
+}
+
+function lookupMime(raw) {
+  const ext = requireText('ext', raw).replace(/^\./, '').toLowerCase()
+  if (!/^[a-z0-9]{1,12}$/.test(ext)) {
+    const err = new Error('ext must be a file extension')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const mime = MIME_BY_EXT[ext]
+  if (!mime) {
+    const err = new Error('unknown extension')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return { ext, mime, generatedAt: new Date().toISOString() }
 }
 
 function parseSemver(name, raw) {
@@ -1162,6 +1197,10 @@ const PAID = {
     validate(url) { compareSemver(url.searchParams.get('a'), url.searchParams.get('b')) },
     run: async (url) => compareSemver(url.searchParams.get('a'), url.searchParams.get('b')),
   },
+  '/mime': {
+    validate(url) { lookupMime(url.searchParams.get('ext')) },
+    run: async (url) => lookupMime(url.searchParams.get('ext')),
+  },
 }
 
 function catalogResources() {
@@ -1188,6 +1227,7 @@ function catalogResources() {
     { path: '/units', description: 'Convert metric and imperial units. Query: value, from, to' },
     { path: '/isbn', description: 'Validate ISBN-10/13 and convert formats. Query: isbn' },
     { path: '/semver', description: 'Compare two SemVer versions. Query: a, b' },
+    { path: '/mime', description: 'Look up MIME type from a file extension. Query: ext' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1271,6 +1311,7 @@ const server = createServer(async (req, res) => {
               { name: 'unit_convert', description: 'Paid metric/imperial unit convert. 0.005 USDC.', inputSchema: { type: 'object', properties: { value: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' } }, required: ['value', 'from', 'to'] } },
               { name: 'isbn_check', description: 'Paid ISBN-10/13 validate and convert. 0.003 USDC.', inputSchema: { type: 'object', properties: { isbn: { type: 'string' } }, required: ['isbn'] } },
               { name: 'semver_compare', description: 'Paid SemVer compare. 0.003 USDC.', inputSchema: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['a', 'b'] } },
+              { name: 'mime_lookup', description: 'Paid MIME type from file extension. 0.003 USDC.', inputSchema: { type: 'object', properties: { ext: { type: 'string' } }, required: ['ext'] } },
             ],
           },
         })
@@ -1297,6 +1338,7 @@ const server = createServer(async (req, res) => {
         unit_convert: '/units',
         isbn_check: '/isbn',
         semver_compare: '/semver',
+        mime_lookup: '/mime',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
