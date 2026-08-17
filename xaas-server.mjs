@@ -40,6 +40,7 @@ const ROUTE_PRICE = {
   '/supply': { usdc: '10000', sol: '10000000' },
   '/tax': { usdc: '15000', sol: '15000000' },
   '/tps': { usdc: '10000', sol: '10000000' },
+  '/rent': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -277,6 +278,10 @@ const BAZAAR = {
     tps: 2500,
     samples: 5,
   }),
+  '/rent': bazaarExtension({ space: '165' }, {
+    space: 165,
+    lamports: 2039280,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -324,6 +329,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/supply': 'Current SPL token supply for a mint',
         '/tax': 'Token-2022 transfer-fee config for a mint',
         '/tps': 'Live Solana TPS from recent performance samples',
+        '/rent': 'Minimum lamports for rent exemption by account size',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -375,7 +381,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                     ? ['solana', 'token-2022', 'transfer-fee', 'tax']
                                                     : path === '/tps'
                                                       ? ['solana', 'tps', 'performance', 'cluster']
-                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                      : path === '/rent'
+                                                        ? ['solana', 'rent', 'exemption', 'account']
+                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -763,6 +771,34 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+function parseSpace(spaceRaw) {
+  if (spaceRaw === null || spaceRaw === '') {
+    const err = new Error('space query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const space = Number(spaceRaw)
+  if (!Number.isInteger(space) || space < 0 || space > 10240) {
+    const err = new Error('space must be an integer from 0 to 10240')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return space
+}
+
+async function rentExempt(spaceRaw) {
+  const space = parseSpace(spaceRaw)
+  const res = await rpc('getMinimumBalanceForRentExemption', [space])
+  return {
+    space,
+    lamports: res.result,
+    sol: Number((res.result / 1e9).toFixed(9)),
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function clusterTps() {
   const res = await rpc('getRecentPerformanceSamples', [5])
@@ -1414,6 +1450,10 @@ const PAID = {
     validate() {},
     run: async () => clusterTps(),
   },
+  '/rent': {
+    validate(url) { parseSpace(url.searchParams.get('space')) },
+    run: async (url) => rentExempt(url.searchParams.get('space') ?? '0'),
+  },
 }
 
 function catalogResources() {
@@ -1447,6 +1487,7 @@ function catalogResources() {
     { path: '/supply', description: 'Current SPL token supply. Query: mint' },
     { path: '/tax', description: 'Token-2022 transfer-fee config. Query: mint' },
     { path: '/tps', description: 'Live Solana TPS from recent performance samples' },
+    { path: '/rent', description: 'Minimum lamports for rent exemption. Query: space' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1537,6 +1578,7 @@ const server = createServer(async (req, res) => {
               { name: 'token_supply', description: 'Paid SPL token supply. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'transfer_fee', description: 'Paid Token-2022 transfer-fee lookup. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'cluster_tps', description: 'Paid Solana TPS snapshot. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'rent_exempt', description: 'Paid rent-exemption lamports by account size. 0.01 USDC.', inputSchema: { type: 'object', properties: { space: { type: 'string' } }, required: ['space'] } },
             ],
           },
         })
@@ -1570,6 +1612,7 @@ const server = createServer(async (req, res) => {
         token_supply: '/supply',
         transfer_fee: '/tax',
         cluster_tps: '/tps',
+        rent_exempt: '/rent',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
