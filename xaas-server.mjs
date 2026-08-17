@@ -7567,6 +7567,7 @@ const server = createServer(async (req, res) => {
   }
 })
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(JSON.stringify({ listening: `http://127.0.0.1:${PORT}`, payTo: PAY_TO, priceSol: PRICE_SOL }))
+const HOST = process.env.HOST || (process.env.RENDER ? '0.0.0.0' : '127.0.0.1')
+server.listen(PORT, HOST, () => {
+  console.log(JSON.stringify({ listening: `http://${HOST}:${PORT}`, payTo: PAY_TO, priceSol: PRICE_SOL }))
 })
