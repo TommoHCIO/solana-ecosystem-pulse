@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import tls from 'node:tls'
 import { readFileSync } from 'node:fs'
@@ -27,6 +28,7 @@ const ROUTE_PRICE = {
   '/account': { usdc: '10000', sol: '10000000' },
   '/holders': { usdc: '15000', sol: '15000000' },
   '/tls': { usdc: '10000', sol: '10000000' },
+  '/fresh': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -205,6 +207,11 @@ const BAZAAR = {
     daysLeft: 80,
     issuer: 'Let\'s Encrypt',
   }),
+  '/fresh': bazaarExtension({ url: 'https://tommohcio.github.io/solana-ecosystem-pulse/' }, {
+    url: 'https://tommohcio.github.io/solana-ecosystem-pulse/',
+    status: 200,
+    sha256: '0'.repeat(64),
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -240,6 +247,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/account': 'Parsed Solana account info for any address',
         '/holders': 'Largest token accounts for a Solana mint',
         '/tls': 'TLS certificate expiry and issuer for a public host',
+        '/fresh': 'Timestamped content fingerprint for a public HTTPS URL',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -267,7 +275,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                             ? ['holders', 'mint', 'solana', 'whales']
                             : path === '/tls'
                               ? ['tls', 'ssl', 'certificate', 'security']
-                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                              : path === '/fresh'
+                                ? ['freshness', 'hash', 'monitor', 'change']
+                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -579,6 +589,27 @@ async function extractPage(target) {
   }
 }
 
+async function contentFresh(target) {
+  const res = await fetch(target, {
+    headers: { accept: 'text/html,application/json,*/*', 'user-agent': 'solana-pulse-xaas' },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(12000),
+  })
+  const buf = Buffer.from(await res.arrayBuffer())
+  const slice = buf.subarray(0, 512000)
+  return {
+    url: target,
+    finalUrl: res.url,
+    status: res.status,
+    contentType: res.headers.get('content-type'),
+    contentLength: buf.length,
+    sha256: createHash('sha256').update(slice).digest('hex'),
+    etag: res.headers.get('etag'),
+    lastModified: res.headers.get('last-modified'),
+    observedAt: new Date().toISOString(),
+  }
+}
+
 function requireHost(name, value) {
   const host = requireText(name, value).replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].toLowerCase()
   if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host)) {
@@ -867,6 +898,18 @@ const PAID = {
     validate(url) { requireHost('host', url.searchParams.get('host')) },
     run: async (url) => tlsCheck(requireHost('host', url.searchParams.get('host'))),
   },
+  '/fresh': {
+    validate(url) {
+      const target = requireText('url', url.searchParams.get('url'))
+      if (!/^https:\/\//i.test(target)) {
+        const err = new Error('url must be https')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => contentFresh(url.searchParams.get('url')),
+  },
 }
 
 function catalogResources() {
@@ -888,6 +931,7 @@ function catalogResources() {
     { path: '/account', description: 'Parsed Solana account info. Query: address' },
     { path: '/holders', description: 'Largest token accounts for a mint. Query: mint' },
     { path: '/tls', description: 'TLS certificate expiry and issuer. Query: host' },
+    { path: '/fresh', description: 'Timestamped content fingerprint for a public HTTPS URL. Query: url' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -966,6 +1010,7 @@ const server = createServer(async (req, res) => {
               { name: 'account_info', description: 'Paid parsed Solana account info. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'token_holders', description: 'Paid largest Solana token accounts for a mint. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'tls_check', description: 'Paid TLS certificate expiry check for a public host. 0.01 USDC.', inputSchema: { type: 'object', properties: { host: { type: 'string' } }, required: ['host'] } },
+              { name: 'content_fresh', description: 'Paid HTTPS content fingerprint (sha256 + headers). 0.005 USDC.', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
             ],
           },
         })
@@ -987,6 +1032,7 @@ const server = createServer(async (req, res) => {
         account_info: '/account',
         token_holders: '/holders',
         tls_check: '/tls',
+        content_fresh: '/fresh',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
