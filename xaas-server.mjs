@@ -38,6 +38,7 @@ const ROUTE_PRICE = {
   '/slug': { usdc: '2000', sol: '2000000' },
   '/fees': { usdc: '10000', sol: '10000000' },
   '/supply': { usdc: '10000', sol: '10000000' },
+  '/tax': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -266,6 +267,11 @@ const BAZAAR = {
     uiAmount: '1000000000',
     decimals: 6,
   }),
+  '/tax': bazaarExtension({ mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, {
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    transferFeeBps: 0,
+    token2022: false,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -311,6 +317,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/slug': 'Turn text into a URL slug',
         '/fees': 'Live Solana prioritization fee snapshot',
         '/supply': 'Current SPL token supply for a mint',
+        '/tax': 'Token-2022 transfer-fee config for a mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -358,7 +365,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                 ? ['solana', 'fees', 'priority', 'compute']
                                                 : path === '/supply'
                                                   ? ['solana', 'supply', 'mint', 'token']
-                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                  : path === '/tax'
+                                                    ? ['solana', 'token-2022', 'transfer-fee', 'tax']
+                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -743,6 +752,31 @@ const LANG_BY_CODE = {
   fi: { name: 'Finnish', native: 'Suomi' },
   no: { name: 'Norwegian', native: 'Norsk' },
   el: { name: 'Greek', native: 'Ελληνικά' },
+}
+
+const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function transferFee(mint) {
+  const res = await rpc('getAccountInfo', [mint, { encoding: 'jsonParsed', commitment: 'confirmed' }])
+  const info = res.result?.value
+  if (!info) {
+    const err = new Error('mint not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const parsed = info.data?.parsed
+  const ext = parsed?.info?.extensions || []
+  const fee = ext.find((item) => item.extension === 'transferFeeConfig')
+  const newer = fee?.state?.newerTransferFee || fee?.newerTransferFee || {}
+  return {
+    mint,
+    owner: info.owner,
+    token2022: info.owner === TOKEN_2022,
+    transferFeeBps: Number(newer.transferFeeBasisPoints || 0),
+    maximumFee: newer.maximumFee || '0',
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 async function tokenSupply(mint) {
@@ -1350,6 +1384,10 @@ const PAID = {
     validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
     run: async (url) => tokenSupply(url.searchParams.get('mint')),
   },
+  '/tax': {
+    validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
+    run: async (url) => transferFee(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -1381,6 +1419,7 @@ function catalogResources() {
     { path: '/slug', description: 'Turn text into a URL slug. Query: text' },
     { path: '/fees', description: 'Live Solana prioritization fee snapshot' },
     { path: '/supply', description: 'Current SPL token supply. Query: mint' },
+    { path: '/tax', description: 'Token-2022 transfer-fee config. Query: mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1469,6 +1508,7 @@ const server = createServer(async (req, res) => {
               { name: 'slugify', description: 'Paid URL slug from text. 0.002 USDC.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
               { name: 'priority_fees', description: 'Paid Solana prioritization fee snapshot. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'token_supply', description: 'Paid SPL token supply. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'transfer_fee', description: 'Paid Token-2022 transfer-fee lookup. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -1500,6 +1540,7 @@ const server = createServer(async (req, res) => {
         slugify: '/slug',
         priority_fees: '/fees',
         token_supply: '/supply',
+        transfer_fee: '/tax',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
