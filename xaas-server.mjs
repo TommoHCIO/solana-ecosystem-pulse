@@ -79,6 +79,7 @@ const ROUTE_PRICE = {
   '/mls': { usdc: '5000', sol: '5000000' },
   '/delg': { usdc: '10000', sol: '10000000' },
   '/alt': { usdc: '10000', sol: '10000000' },
+  '/gpa': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -502,6 +503,12 @@ const BAZAAR = {
     addressCount: 0,
     addresses: [],
   }),
+  '/gpa': bazaarExtension({ program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', space: '165' }, {
+    program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    space: 165,
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -588,6 +595,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/mls': 'Live Solana lowest slot still in this node ledger',
         '/delg': 'Live Solana SPL token accounts by approved delegate',
         '/alt': 'Live Solana address lookup table metadata',
+        '/gpa': 'Live Solana size-filtered program accounts',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -717,7 +725,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                   ? ['solana', 'token', 'delegate', 'accounts']
                                                                                                                                   : path === '/alt'
                                                                                                                                     ? ['solana', 'lookup', 'table', 'alt']
-                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                    : path === '/gpa'
+                                                                                                                                      ? ['solana', 'program', 'accounts', 'filter']
+                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1508,6 +1518,31 @@ function parseBlockRange(startRaw, endRaw) {
     throw err
   }
   return { start, end }
+}
+
+async function programAccounts(programRaw, spaceRaw) {
+  const program = requirePubkey('program', programRaw)
+  const space = parseSpace(spaceRaw)
+  const res = await rpc('getProgramAccounts', [
+    program,
+    {
+      encoding: 'base64',
+      dataSlice: { offset: 0, length: 0 },
+      filters: [{ dataSize: space }],
+    },
+  ])
+  const rows = (Array.isArray(res.result) ? res.result : []).slice(0, 20).map((item) => ({
+    pubkey: item.pubkey,
+    lamports: item.account?.lamports ?? null,
+    owner: item.account?.owner ?? null,
+  }))
+  return {
+    program,
+    space,
+    count: rows.length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 function parseLimit(raw, fallback = 8) {
@@ -2561,6 +2596,13 @@ const PAID = {
     validate(url) { requirePubkey('table', url.searchParams.get('table')) },
     run: async (url) => addressLookupTable(url.searchParams.get('table')),
   },
+  '/gpa': {
+    validate(url) {
+      requirePubkey('program', url.searchParams.get('program'))
+      parseSpace(url.searchParams.get('space'))
+    },
+    run: async (url) => programAccounts(url.searchParams.get('program'), url.searchParams.get('space')),
+  },
 }
 
 function catalogResources() {
@@ -2633,6 +2675,7 @@ function catalogResources() {
     { path: '/mls', description: 'Live Solana lowest slot still in this node ledger' },
     { path: '/delg', description: 'Live Solana SPL token accounts by approved delegate' },
     { path: '/alt', description: 'Live Solana address lookup table metadata' },
+    { path: '/gpa', description: 'Live Solana size-filtered program accounts' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2762,6 +2805,7 @@ const server = createServer(async (req, res) => {
               { name: 'minimum_ledger_slot', description: 'Paid Solana minimumLedgerSlot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'token_accounts_by_delegate', description: 'Paid Solana getTokenAccountsByDelegate. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' } }, required: ['delegate'] } },
               { name: 'address_lookup_table', description: 'Paid Solana address lookup table metadata. 0.01 USDC.', inputSchema: { type: 'object', properties: { table: { type: 'string' } }, required: ['table'] } },
+              { name: 'program_accounts', description: 'Paid Solana getProgramAccounts filtered by dataSize. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' } }, required: ['program', 'space'] } },
             ],
           },
         })
@@ -2834,6 +2878,7 @@ const server = createServer(async (req, res) => {
         minimum_ledger_slot: '/mls',
         token_accounts_by_delegate: '/delg',
         address_lookup_table: '/alt',
+        program_accounts: '/gpa',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
