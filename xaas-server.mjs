@@ -36,6 +36,7 @@ const ROUTE_PRICE = {
   '/mime': { usdc: '3000', sol: '3000000' },
   '/lang': { usdc: '3000', sol: '3000000' },
   '/slug': { usdc: '2000', sol: '2000000' },
+  '/fees': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -254,6 +255,11 @@ const BAZAAR = {
     text: 'Solana Pulse XaaS',
     slug: 'solana-pulse-xaas',
   }),
+  '/fees': bazaarExtension({}, {
+    median: 1000,
+    p90: 50000,
+    samples: 150,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -297,6 +303,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/mime': 'Look up MIME type from a file extension',
         '/lang': 'Look up ISO 639 language code name',
         '/slug': 'Turn text into a URL slug',
+        '/fees': 'Live Solana prioritization fee snapshot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -340,7 +347,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                             ? ['language', 'iso639', 'locale', 'i18n']
                                             : path === '/slug'
                                               ? ['slug', 'url', 'seo', 'text']
-                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                              : path === '/fees'
+                                                ? ['solana', 'fees', 'priority', 'compute']
+                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -725,6 +734,21 @@ const LANG_BY_CODE = {
   fi: { name: 'Finnish', native: 'Suomi' },
   no: { name: 'Norwegian', native: 'Norsk' },
   el: { name: 'Greek', native: 'Ελληνικά' },
+}
+
+async function priorityFees() {
+  const res = await rpc('getRecentPrioritizationFees', [[]])
+  const values = (res.result || []).map((row) => Number(row.prioritizationFee)).filter((n) => Number.isFinite(n)).sort((a, b) => a - b)
+  const at = (p) => values.length ? values[Math.min(values.length - 1, Math.floor((values.length - 1) * p))] : 0
+  return {
+    samples: values.length,
+    min: values[0] || 0,
+    median: at(0.5),
+    p90: at(0.9),
+    max: values[values.length - 1] || 0,
+    unit: 'micro-lamports-per-cu',
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 function makeSlug(raw) {
@@ -1291,6 +1315,10 @@ const PAID = {
     validate(url) { makeSlug(url.searchParams.get('text')) },
     run: async (url) => makeSlug(url.searchParams.get('text')),
   },
+  '/fees': {
+    validate() {},
+    run: async () => priorityFees(),
+  },
 }
 
 function catalogResources() {
@@ -1320,6 +1348,7 @@ function catalogResources() {
     { path: '/mime', description: 'Look up MIME type from a file extension. Query: ext' },
     { path: '/lang', description: 'Look up ISO 639-1 language code. Query: code' },
     { path: '/slug', description: 'Turn text into a URL slug. Query: text' },
+    { path: '/fees', description: 'Live Solana prioritization fee snapshot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1406,6 +1435,7 @@ const server = createServer(async (req, res) => {
               { name: 'mime_lookup', description: 'Paid MIME type from file extension. 0.003 USDC.', inputSchema: { type: 'object', properties: { ext: { type: 'string' } }, required: ['ext'] } },
               { name: 'lang_lookup', description: 'Paid ISO 639-1 language lookup. 0.003 USDC.', inputSchema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } },
               { name: 'slugify', description: 'Paid URL slug from text. 0.002 USDC.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
+              { name: 'priority_fees', description: 'Paid Solana prioritization fee snapshot. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1435,6 +1465,7 @@ const server = createServer(async (req, res) => {
         mime_lookup: '/mime',
         lang_lookup: '/lang',
         slugify: '/slug',
+        priority_fees: '/fees',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
