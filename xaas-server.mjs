@@ -85,6 +85,7 @@ const ROUTE_PRICE = {
   '/nce': { usdc: '10000', sol: '10000000' },
   '/brw': { usdc: '10000', sol: '10000000' },
   '/xfer': { usdc: '15000', sol: '15000000' },
+  '/own': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -539,6 +540,10 @@ const BAZAAR = {
     sol: [],
     tokens: [],
   }),
+  '/own': bazaarExtension({ owner: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA', mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, {
+    amount: '0',
+    accounts: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -631,6 +636,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/nce': 'Live Solana durable nonce account metadata',
         '/brw': 'Live Solana getBlock reward rows for a slot',
         '/xfer': 'Live Solana parsed SOL and SPL token transfers for a signature',
+        '/own': 'Live Solana SPL token balance for a wallet and mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -772,7 +778,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                               ? ['solana', 'block', 'rewards', 'lamports']
                                                                                                                                               : path === '/xfer'
                                                                                                                                                 ? ['solana', 'token', 'transfers', 'parsed']
-                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                : path === '/own'
+                                                                                                                                                  ? ['solana', 'token', 'owner', 'mint']
+                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1136,6 +1144,31 @@ async function solTokens(address) {
     program: item.account.owner,
   }))
   return { address, count: rows.length, tokens: rows, generatedAt: new Date().toISOString() }
+}
+
+async function tokenBalanceByOwnerMint(ownerRaw, mintRaw) {
+  const owner = requirePubkey('owner', ownerRaw)
+  const mint = requirePubkey('mint', mintRaw)
+  const token = await rpc('getTokenAccountsByOwner', [
+    owner,
+    { mint },
+    { encoding: 'jsonParsed' },
+  ])
+  const rows = (token.result?.value ?? []).slice(0, 8).map((item) => ({
+    account: item.pubkey,
+    amount: item.account.data.parsed?.info?.tokenAmount?.uiAmountString ?? '0',
+    decimals: item.account.data.parsed?.info?.tokenAmount?.decimals ?? null,
+    program: item.account.owner,
+  }))
+  const amount = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+  return {
+    owner,
+    mint,
+    amount: String(amount),
+    accounts: rows.length,
+    holdings: rows,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 function requireText(name, value) {
@@ -2848,6 +2881,13 @@ const PAID = {
     validate(url) { requireSig('sig', url.searchParams.get('sig')) },
     run: async (url) => parsedTransfers(url.searchParams.get('sig')),
   },
+  '/own': {
+    validate(url) {
+      requirePubkey('owner', url.searchParams.get('owner'))
+      requirePubkey('mint', url.searchParams.get('mint'))
+    },
+    run: async (url) => tokenBalanceByOwnerMint(url.searchParams.get('owner'), url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -2926,6 +2966,7 @@ function catalogResources() {
     { path: '/nce', description: 'Live Solana durable nonce account metadata' },
     { path: '/brw', description: 'Live Solana getBlock reward rows for a slot' },
     { path: '/xfer', description: 'Live Solana parsed SOL and SPL token transfers for a signature' },
+    { path: '/own', description: 'Live Solana SPL token balance for a wallet and mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3061,6 +3102,7 @@ const server = createServer(async (req, res) => {
               { name: 'nonce_account', description: 'Paid Solana durable nonce account metadata. 0.01 USDC.', inputSchema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } },
               { name: 'block_rewards', description: 'Paid Solana getBlock reward rows for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'parsed_transfers', description: 'Paid Solana parsed SOL and SPL transfers for a signature. 0.015 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
+              { name: 'owner_mint_balance', description: 'Paid Solana SPL token balance for a wallet and mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' } }, required: ['owner', 'mint'] } },
             ],
           },
         })
@@ -3139,6 +3181,7 @@ const server = createServer(async (req, res) => {
         nonce_account: '/nce',
         block_rewards: '/brw',
         parsed_transfers: '/xfer',
+        owner_mint_balance: '/own',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
