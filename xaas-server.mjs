@@ -104,6 +104,7 @@ const ROUTE_PRICE = {
   '/ldad': { usdc: '10000', sol: '10000000' },
   '/tpu': { usdc: '10000', sol: '10000000' },
   '/ncw': { usdc: '15000', sol: '15000000' },
+  '/bpid': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -644,6 +645,10 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/bpid': bazaarExtension({ identity: 'Certusm1sa411sMpV9FPqU5dXAYhmmhygvxJ23S6hJ24' }, {
+    leaderSlots: 0,
+    blocksProduced: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -755,6 +760,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/ldad': 'Live Solana versioned transaction loaded addresses',
         '/tpu': 'Live Solana cluster TPU gossip and RPC endpoints',
         '/ncw': 'Live Solana non-circulating largest native SOL accounts',
+        '/bpid': 'Live Solana block production for one validator identity',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -934,7 +940,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                     ? ['solana', 'cluster', 'tpu', 'gossip']
                                                                                                                                                                                     : path === '/ncw'
                                                                                                                                                                                       ? ['solana', 'whales', 'noncirculating', 'sol']
-                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                      : path === '/bpid'
+                                                                                                                                                                                        ? ['solana', 'validator', 'production', 'identity']
+                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2075,6 +2083,28 @@ async function blockProduction() {
   return {
     firstSlot: range.firstSlot,
     lastSlot: range.lastSlot,
+    leaderSlots,
+    blocksProduced,
+    skipped,
+    skipRate: leaderSlots ? Number((skipped / leaderSlots).toFixed(6)) : 0,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function blockProductionByIdentity(identityRaw) {
+  const identity = requirePubkey('identity', identityRaw)
+  const res = await rpc('getBlockProduction', [{ identity }])
+  const value = res.result?.value || {}
+  const range = value.range || {}
+  const row = value.byIdentity?.[identity]
+  const leaderSlots = Array.isArray(row) ? Number(row[0] || 0) : 0
+  const blocksProduced = Array.isArray(row) ? Number(row[1] || 0) : 0
+  const skipped = Math.max(0, leaderSlots - blocksProduced)
+  return {
+    identity,
+    found: Array.isArray(row),
+    firstSlot: range.firstSlot ?? null,
+    lastSlot: range.lastSlot ?? null,
     leaderSlots,
     blocksProduced,
     skipped,
@@ -3739,6 +3769,10 @@ const PAID = {
     validate() {},
     run: async () => nonCirculatingLargestAccounts(),
   },
+  '/bpid': {
+    validate(url) { requirePubkey('identity', url.searchParams.get('identity')) },
+    run: async (url) => blockProductionByIdentity(url.searchParams.get('identity')),
+  },
 }
 
 function catalogResources() {
@@ -3836,6 +3870,7 @@ function catalogResources() {
     { path: '/ldad', description: 'Live Solana versioned transaction loaded addresses' },
     { path: '/tpu', description: 'Live Solana cluster TPU gossip and RPC endpoints' },
     { path: '/ncw', description: 'Live Solana non-circulating largest native SOL accounts' },
+    { path: '/bpid', description: 'Live Solana block production for one validator identity' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3990,6 +4025,7 @@ const server = createServer(async (req, res) => {
               { name: 'loaded_addresses', description: 'Paid Solana versioned transaction loaded addresses. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
               { name: 'cluster_tpu', description: 'Paid Solana cluster TPU gossip and RPC endpoints. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'noncirculating_whales', description: 'Paid Solana non-circulating largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'block_production_identity', description: 'Paid Solana block production for one validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
             ],
           },
         })
@@ -4087,6 +4123,7 @@ const server = createServer(async (req, res) => {
         loaded_addresses: '/ldad',
         cluster_tpu: '/tpu',
         noncirculating_whales: '/ncw',
+        block_production_identity: '/bpid',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
