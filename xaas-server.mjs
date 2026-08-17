@@ -59,6 +59,7 @@ const ROUTE_PRICE = {
   '/ldr': { usdc: '5000', sol: '5000000' },
   '/fab': { usdc: '5000', sol: '5000000' },
   '/snap': { usdc: '5000', sol: '5000000' },
+  '/rtx': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -372,6 +373,9 @@ const BAZAAR = {
     full: 439000000,
     incremental: 439000100,
   }),
+  '/rtx': bazaarExtension({}, {
+    slot: 439000000,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -438,6 +442,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/ldr': 'Live Solana current slot leader identity',
         '/fab': 'Live Solana first available confirmed block slot',
         '/snap': 'Live Solana highest full and incremental snapshot slots',
+        '/rtx': 'Live Solana max retransmit slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -527,7 +532,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                           ? ['solana', 'ledger', 'oldest', 'block']
                                                                                           : path === '/snap'
                                                                                             ? ['solana', 'snapshot', 'full', 'incremental']
-                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                            : path === '/rtx'
+                                                                                              ? ['solana', 'retransmit', 'shred', 'slot']
+                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -915,6 +922,14 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function maxRetransmitSlot() {
+  const res = await rpc('getMaxRetransmitSlot', [])
+  return {
+    slot: res.result,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function highestSnapshot() {
   const res = await rpc('getHighestSnapshotSlot', [])
@@ -1862,6 +1877,10 @@ const PAID = {
     validate() {},
     run: async () => highestSnapshot(),
   },
+  '/rtx': {
+    validate() {},
+    run: async () => maxRetransmitSlot(),
+  },
 }
 
 function catalogResources() {
@@ -1914,6 +1933,7 @@ function catalogResources() {
     { path: '/ldr', description: 'Live Solana current slot leader identity' },
     { path: '/fab', description: 'Live Solana first available confirmed block slot' },
     { path: '/snap', description: 'Live Solana highest full and incremental snapshot slots' },
+    { path: '/rtx', description: 'Live Solana max retransmit slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2023,6 +2043,7 @@ const server = createServer(async (req, res) => {
               { name: 'slot_leader', description: 'Paid Solana current slot leader. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'first_available_block', description: 'Paid Solana first available block. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'highest_snapshot', description: 'Paid Solana highest snapshot slots. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'max_retransmit_slot', description: 'Paid Solana max retransmit slot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -2075,6 +2096,7 @@ const server = createServer(async (req, res) => {
         slot_leader: '/ldr',
         first_available_block: '/fab',
         highest_snapshot: '/snap',
+        max_retransmit_slot: '/rtx',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
