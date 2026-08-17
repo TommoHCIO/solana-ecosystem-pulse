@@ -164,6 +164,7 @@ const ROUTE_PRICE = {
   '/stcs': { usdc: '5000', sol: '5000000' },
   '/psmp': { usdc: '10000', sol: '10000000' },
   '/vnid': { usdc: '10000', sol: '10000000' },
+  '/perp': { usdc: '50000', sol: '50000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1097,6 +1098,14 @@ const BAZAAR = {
     delinquent: 0,
     votes: [],
   }),
+  '/perp': bazaarExtension({
+    mint: 'So11111111111111111111111111111111111111112',
+  }, {
+    mint: 'So11111111111111111111111111111111111111112',
+    market: 'SOL',
+    longAvailableLiquidity: '0',
+    shortAvailableLiquidity: '0',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1268,6 +1277,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/stcs': 'Live Solana signature statuses after a minimum context slot',
         '/psmp': 'Live Solana recent performance samples for a required sample limit',
         '/vnid': 'Live Solana vote accounts for a required validator identity',
+        '/perp': 'Live Jupiter perpetual liquidity borrow and utilization for a required market mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1567,7 +1577,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                             ? ['solana', 'rpc', 'tps', 'samples']
                                                                                                                                                                                                                                                                                                             : path === '/vnid'
                                                                                                                                                                                                                                                                                                               ? ['solana', 'rpc', 'vote', 'identity']
-                                                                                                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                              : path === '/perp'
+                                                                                                                                                                                                                                                                                                                ? ['solana', 'jupiter', 'perps', 'funding']
+                                                                                                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2747,6 +2759,46 @@ async function jupiterQuote(url) {
     slippageBps: body.slippageBps,
     priceImpactPct: body.priceImpactPct,
     routePlan: (body.routePlan || []).slice(0, 8),
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+const PERP_MARKETS = {
+  So11111111111111111111111111111111111111112: 'SOL',
+  '7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs': 'ETH',
+  '3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh': 'WBTC',
+}
+
+async function jupiterPerpPool(mintRaw) {
+  const mint = requirePubkey('mint', mintRaw)
+  const market = PERP_MARKETS[mint]
+  if (!market) {
+    const err = new Error('mint must be a Jupiter perpetual market: SOL, ETH, or WBTC')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const perpUrl = 'https://perps-api.jup.ag/v1/pool-info?mint=' + encodeURIComponent(mint)
+  const res = await fetch(perpUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.code || body.error) {
+    const err = new Error(body.message || body.error || 'jupiter perp pool failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  return {
+    mint,
+    market,
+    longAvailableLiquidity: body.longAvailableLiquidity ?? null,
+    longBorrowRatePercent: body.longBorrowRatePercent ?? null,
+    longUtilizationPercent: body.longUtilizationPercent ?? null,
+    shortAvailableLiquidity: body.shortAvailableLiquidity ?? null,
+    shortBorrowRatePercent: body.shortBorrowRatePercent ?? null,
+    shortUtilizationPercent: body.shortUtilizationPercent ?? null,
+    openFeePercent: body.openFeePercent ?? null,
+    maxRequestExecutionSec: body.maxRequestExecutionSec ?? null,
+    maxPriceImpactFeePercent: body.maxPriceImpactFeePercent ?? null,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -6502,6 +6554,18 @@ const PAID = {
       url.searchParams.get('identity'),
     ),
   },
+  '/perp': {
+    validate(url) {
+      const mint = requirePubkey('mint', url.searchParams.get('mint'))
+      if (!PERP_MARKETS[mint]) {
+        const err = new Error('mint must be a Jupiter perpetual market: SOL, ETH, or WBTC')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => jupiterPerpPool(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -6659,6 +6723,7 @@ function catalogResources() {
     { path: '/stcs', description: 'Live Solana signature statuses after a minimum context slot' },
     { path: '/psmp', description: 'Live Solana recent performance samples for a required sample limit' },
     { path: '/vnid', description: 'Live Solana vote accounts for a required validator identity' },
+    { path: '/perp', description: 'Live Jupiter perpetual liquidity borrow and utilization for a required market mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6876,6 +6941,7 @@ const server = createServer(async (req, res) => {
               { name: 'signature_statuses_min_context', description: 'Paid Solana getSignatureStatuses after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { sigs: { type: 'string' }, slot: { type: 'string' } }, required: ['sigs', 'slot'] } },
               { name: 'performance_samples', description: 'Paid Solana recent performance samples for a required sample limit. 0.01 USDC.', inputSchema: { type: 'object', properties: { limit: { type: 'string' } }, required: ['limit'] } },
               { name: 'vote_accounts_by_identity', description: 'Paid Solana vote accounts for a required validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
+              { name: 'jupiter_perp_pool', description: 'Paid Jupiter perpetual liquidity, borrow, and utilization for SOL ETH or WBTC. 0.05 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -7033,6 +7099,7 @@ const server = createServer(async (req, res) => {
         signature_statuses_min_context: '/stcs',
         performance_samples: '/psmp',
         vote_accounts_by_identity: '/vnid',
+        jupiter_perp_pool: '/perp',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
