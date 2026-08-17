@@ -61,6 +61,7 @@ const ROUTE_PRICE = {
   '/snap': { usdc: '5000', sol: '5000000' },
   '/rtx': { usdc: '5000', sol: '5000000' },
   '/shred': { usdc: '5000', sol: '5000000' },
+  '/epi': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -380,6 +381,14 @@ const BAZAAR = {
   '/shred': bazaarExtension({}, {
     slot: 439000000,
   }),
+  '/epi': bazaarExtension({}, {
+    epoch: 800,
+    slotIndex: 100000,
+    slotsInEpoch: 432000,
+    absoluteSlot: 439000000,
+    blockHeight: 250000000,
+    transactionCount: 400000000000,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -448,6 +457,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/snap': 'Live Solana highest full and incremental snapshot slots',
         '/rtx': 'Live Solana max retransmit slot',
         '/shred': 'Live Solana max shred-insert slot',
+        '/epi': 'Live Solana current epoch progress',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -541,7 +551,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                               ? ['solana', 'retransmit', 'shred', 'slot']
                                                                                               : path === '/shred'
                                                                                                 ? ['solana', 'shred', 'insert', 'blockstore']
-                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                : path === '/epi'
+                                                                                                  ? ['solana', 'epoch', 'progress', 'slots']
+                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -929,6 +941,19 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function epochInfo() {
+  const res = await rpc('getEpochInfo', [])
+  return {
+    epoch: res.result?.epoch,
+    slotIndex: res.result?.slotIndex,
+    slotsInEpoch: res.result?.slotsInEpoch,
+    absoluteSlot: res.result?.absoluteSlot,
+    blockHeight: res.result?.blockHeight,
+    transactionCount: res.result?.transactionCount,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function maxShredInsertSlot() {
   const res = await rpc('getMaxShredInsertSlot', [])
@@ -1900,6 +1925,10 @@ const PAID = {
     validate() {},
     run: async () => maxShredInsertSlot(),
   },
+  '/epi': {
+    validate() {},
+    run: async () => epochInfo(),
+  },
 }
 
 function catalogResources() {
@@ -1954,6 +1983,7 @@ function catalogResources() {
     { path: '/snap', description: 'Live Solana highest full and incremental snapshot slots' },
     { path: '/rtx', description: 'Live Solana max retransmit slot' },
     { path: '/shred', description: 'Live Solana max shred-insert slot' },
+    { path: '/epi', description: 'Live Solana current epoch progress' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2065,6 +2095,7 @@ const server = createServer(async (req, res) => {
               { name: 'highest_snapshot', description: 'Paid Solana highest snapshot slots. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'max_retransmit_slot', description: 'Paid Solana max retransmit slot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'max_shred_insert_slot', description: 'Paid Solana max shred-insert slot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'epoch_info', description: 'Paid Solana current epoch progress. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -2119,6 +2150,7 @@ const server = createServer(async (req, res) => {
         highest_snapshot: '/snap',
         max_retransmit_slot: '/rtx',
         max_shred_insert_slot: '/shred',
+        epoch_info: '/epi',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
