@@ -81,6 +81,7 @@ const ROUTE_PRICE = {
   '/alt': { usdc: '10000', sol: '10000000' },
   '/gpa': { usdc: '15000', sol: '15000000' },
   '/ffm': { usdc: '10000', sol: '10000000' },
+  '/sim': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -514,6 +515,11 @@ const BAZAAR = {
     lamports: 5000,
     sol: 0.000005,
   }),
+  '/sim': bazaarExtension({ tx: 'AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9A' }, {
+    err: null,
+    units: 0,
+    logs: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -602,6 +608,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/alt': 'Live Solana address lookup table metadata',
         '/gpa': 'Live Solana size-filtered program accounts',
         '/ffm': 'Live Solana fee for a serialized transaction message',
+        '/sim': 'Live Solana simulateTransaction preflight for a signed transaction',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -735,7 +742,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                       ? ['solana', 'program', 'accounts', 'filter']
                                                                                                                                       : path === '/ffm'
                                                                                                                                         ? ['solana', 'fee', 'message', 'lamports']
-                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                        : path === '/sim'
+                                                                                                                                          ? ['solana', 'simulate', 'transaction', 'preflight']
+                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1577,6 +1586,35 @@ async function feeForMessage(messageRaw) {
   return {
     lamports,
     sol: lamports / 1e9,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function parseTx(raw) {
+  if (raw === null || raw === '') {
+    const err = new Error('tx query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const tx = String(raw).trim()
+  if (!/^[A-Za-z0-9+/]+=*$/.test(tx) || tx.length < 64 || tx.length > 4096) {
+    const err = new Error('tx must be base64 between 64 and 4096 characters')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return tx
+}
+
+async function simulateTx(txRaw) {
+  const tx = parseTx(txRaw)
+  const res = await rpc('simulateTransaction', [tx, { encoding: 'base64', sigVerify: false, replaceRecentBlockhash: true }])
+  const value = res.result?.value || {}
+  return {
+    err: value.err ?? null,
+    units: value.unitsConsumed ?? 0,
+    logs: Array.isArray(value.logs) ? value.logs.slice(0, 16) : [],
     generatedAt: new Date().toISOString(),
   }
 }
@@ -2643,6 +2681,10 @@ const PAID = {
     validate(url) { parseMessage(url.searchParams.get('message')) },
     run: async (url) => feeForMessage(url.searchParams.get('message')),
   },
+  '/sim': {
+    validate(url) { parseTx(url.searchParams.get('tx')) },
+    run: async (url) => simulateTx(url.searchParams.get('tx')),
+  },
 }
 
 function catalogResources() {
@@ -2717,6 +2759,7 @@ function catalogResources() {
     { path: '/alt', description: 'Live Solana address lookup table metadata' },
     { path: '/gpa', description: 'Live Solana size-filtered program accounts' },
     { path: '/ffm', description: 'Live Solana fee for a serialized transaction message' },
+    { path: '/sim', description: 'Live Solana simulateTransaction preflight for a signed transaction' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2848,6 +2891,7 @@ const server = createServer(async (req, res) => {
               { name: 'address_lookup_table', description: 'Paid Solana address lookup table metadata. 0.01 USDC.', inputSchema: { type: 'object', properties: { table: { type: 'string' } }, required: ['table'] } },
               { name: 'program_accounts', description: 'Paid Solana getProgramAccounts filtered by dataSize. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' } }, required: ['program', 'space'] } },
               { name: 'fee_for_message', description: 'Paid Solana getFeeForMessage for a serialized message. 0.01 USDC.', inputSchema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] } },
+              { name: 'simulate_transaction', description: 'Paid Solana simulateTransaction preflight. 0.015 USDC.', inputSchema: { type: 'object', properties: { tx: { type: 'string' } }, required: ['tx'] } },
             ],
           },
         })
@@ -2922,6 +2966,7 @@ const server = createServer(async (req, res) => {
         address_lookup_table: '/alt',
         program_accounts: '/gpa',
         fee_for_message: '/ffm',
+        simulate_transaction: '/sim',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
