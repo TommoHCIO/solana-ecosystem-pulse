@@ -99,6 +99,7 @@ const ROUTE_PRICE = {
   '/cpi': { usdc: '10000', sol: '10000000' },
   '/lfee': { usdc: '10000', sol: '10000000' },
   '/until': { usdc: '10000', sol: '10000000' },
+  '/t22': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -619,6 +620,10 @@ const BAZAAR = {
     count: 0,
     signatures: [],
   }),
+  '/t22': bazaarExtension({ owner: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    count: 0,
+    tokens: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -725,6 +730,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/cpi': 'Live Solana parsed inner CPI instructions for a signature',
         '/lfee': 'Live Solana account-specific prioritization fees',
         '/until': 'Live Solana paginated signatures with an until cursor',
+        '/t22': 'Live Solana Token-2022 accounts for a wallet',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -894,7 +900,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                           ? ['solana', 'fees', 'priority', 'local']
                                                                                                                                                                           : path === '/until'
                                                                                                                                                                             ? ['solana', 'signatures', 'until', 'cursor']
-                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                            : path === '/t22'
+                                                                                                                                                                              ? ['solana', 'token2022', 'owner', 'accounts']
+                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1537,6 +1545,28 @@ async function tokenBalanceByOwnerMint(ownerRaw, mintRaw) {
     amount: String(amount),
     accounts: rows.length,
     holdings: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function token2022ByOwner(ownerRaw) {
+  const owner = requirePubkey('owner', ownerRaw)
+  const token2022 = await rpc('getTokenAccountsByOwner', [
+    owner,
+    { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' },
+    { encoding: 'jsonParsed' },
+  ])
+  const rows = (token2022.result?.value ?? []).slice(0, 20).map((item) => ({
+    account: item.pubkey,
+    mint: item.account.data.parsed?.info?.mint ?? null,
+    amount: item.account.data.parsed?.info?.tokenAmount?.uiAmountString ?? '0',
+    decimals: item.account.data.parsed?.info?.tokenAmount?.decimals ?? null,
+  }))
+  return {
+    owner,
+    program: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+    count: rows.length,
+    tokens: rows,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -3582,6 +3612,10 @@ const PAID = {
     },
     run: async (url) => signatureHistoryUntil(url.searchParams.get('address'), url.searchParams.get('until')),
   },
+  '/t22': {
+    validate(url) { requirePubkey('owner', url.searchParams.get('owner')) },
+    run: async (url) => token2022ByOwner(url.searchParams.get('owner')),
+  },
 }
 
 function catalogResources() {
@@ -3674,6 +3708,7 @@ function catalogResources() {
     { path: '/cpi', description: 'Live Solana parsed inner CPI instructions for a signature' },
     { path: '/lfee', description: 'Live Solana account-specific prioritization fees' },
     { path: '/until', description: 'Live Solana paginated signatures with an until cursor' },
+    { path: '/t22', description: 'Live Solana Token-2022 accounts for a wallet' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3823,6 +3858,7 @@ const server = createServer(async (req, res) => {
               { name: 'inner_instructions', description: 'Paid Solana parsed inner CPI instructions. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
               { name: 'local_priority_fees', description: 'Paid Solana account-specific prioritization fees. 0.01 USDC.', inputSchema: { type: 'object', properties: { accounts: { type: 'string' } }, required: ['accounts'] } },
               { name: 'signature_history_until', description: 'Paid Solana paginated signatures with an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'until'] } },
+              { name: 'token2022_accounts', description: 'Paid Solana Token-2022 accounts for a wallet. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' } }, required: ['owner'] } },
             ],
           },
         })
@@ -3915,6 +3951,7 @@ const server = createServer(async (req, res) => {
         inner_instructions: '/cpi',
         local_priority_fees: '/lfee',
         signature_history_until: '/until',
+        token2022_accounts: '/t22',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
