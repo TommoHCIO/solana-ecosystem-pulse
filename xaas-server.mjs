@@ -92,6 +92,7 @@ const ROUTE_PRICE = {
   '/mdt': { usdc: '10000', sol: '10000000' },
   '/ata': { usdc: '10000', sol: '10000000' },
   '/jts': { usdc: '10000', sol: '10000000' },
+  '/gpm': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -582,6 +583,10 @@ const BAZAAR = {
     count: 0,
     tokens: [],
   }),
+  '/gpm': bazaarExtension({ program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', offset: '0', bytes: '11111111111111111111111111111111' }, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -681,6 +686,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/mdt': 'Live Solana mint name symbol decimals supply and authorities',
         '/ata': 'Live Solana associated token account address and existence',
         '/jts': 'Live Jupiter token search by name symbol or mint',
+        '/gpm': 'Live Solana getProgramAccounts filtered by memcmp',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -836,7 +842,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                             ? ['solana', 'token', 'ata', 'associated']
                                                                                                                                                             : path === '/jts'
                                                                                                                                                               ? ['solana', 'jupiter', 'token', 'search']
-                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                              : path === '/gpm'
+                                                                                                                                                                ? ['solana', 'gpa', 'memcmp', 'filter']
+                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1920,6 +1928,67 @@ async function programAccounts(programRaw, spaceRaw) {
   return {
     program,
     space,
+    count: rows.length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function parseOffset(raw) {
+  if (raw === null || raw === '') {
+    const err = new Error('offset query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const offset = Number(raw)
+  if (!Number.isInteger(offset) || offset < 0 || offset > 10240) {
+    const err = new Error('offset must be an integer from 0 to 10240')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return offset
+}
+
+function parseMemcmpBytes(raw) {
+  if (raw === null || raw === '') {
+    const err = new Error('bytes query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const bytes = String(raw).trim()
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,88}$/.test(bytes)) {
+    const err = new Error('bytes must be base58 between 32 and 88 characters')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return bytes
+}
+
+async function programAccountsMemcmp(programRaw, offsetRaw, bytesRaw) {
+  const program = requirePubkey('program', programRaw)
+  const offset = parseOffset(offsetRaw)
+  const bytes = parseMemcmpBytes(bytesRaw)
+  const res = await rpc('getProgramAccounts', [
+    program,
+    {
+      encoding: 'base64',
+      dataSlice: { offset: 0, length: 0 },
+      filters: [{ memcmp: { offset, bytes } }],
+    },
+  ])
+  const rows = (Array.isArray(res.result) ? res.result : []).slice(0, 20).map((item) => ({
+    pubkey: item.pubkey,
+    lamports: item.account?.lamports ?? null,
+    owner: item.account?.owner ?? null,
+  }))
+  return {
+    program,
+    offset,
+    bytes,
     count: rows.length,
     accounts: rows,
     generatedAt: new Date().toISOString(),
@@ -3235,6 +3304,14 @@ const PAID = {
     validate(url) { requireText('q', url.searchParams.get('q')) },
     run: async (url) => jupiterTokenSearch(url.searchParams.get('q')),
   },
+  '/gpm': {
+    validate(url) {
+      requirePubkey('program', url.searchParams.get('program'))
+      parseOffset(url.searchParams.get('offset'))
+      parseMemcmpBytes(url.searchParams.get('bytes'))
+    },
+    run: async (url) => programAccountsMemcmp(url.searchParams.get('program'), url.searchParams.get('offset'), url.searchParams.get('bytes')),
+  },
 }
 
 function catalogResources() {
@@ -3320,6 +3397,7 @@ function catalogResources() {
     { path: '/mdt', description: 'Live Solana mint name symbol decimals supply and authorities' },
     { path: '/ata', description: 'Live Solana associated token account address and existence' },
     { path: '/jts', description: 'Live Jupiter token search by name symbol or mint' },
+    { path: '/gpm', description: 'Live Solana getProgramAccounts filtered by memcmp' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3462,6 +3540,7 @@ const server = createServer(async (req, res) => {
               { name: 'mint_metadata', description: 'Paid Solana mint name symbol decimals and authorities. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'associated_token_account', description: 'Paid Solana ATA derive and existence check. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' } }, required: ['owner', 'mint'] } },
               { name: 'jupiter_token_search', description: 'Paid Jupiter token search by name symbol or mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
+              { name: 'program_accounts_memcmp', description: 'Paid Solana getProgramAccounts filtered by memcmp. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' } }, required: ['program', 'offset', 'bytes'] } },
             ],
           },
         })
@@ -3547,6 +3626,7 @@ const server = createServer(async (req, res) => {
         mint_metadata: '/mdt',
         associated_token_account: '/ata',
         jupiter_token_search: '/jts',
+        program_accounts_memcmp: '/gpm',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
