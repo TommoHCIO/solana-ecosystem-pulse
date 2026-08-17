@@ -126,6 +126,7 @@ const ROUTE_PRICE = {
   '/nrpc': { usdc: '10000', sol: '10000000' },
   '/hwin': { usdc: '10000', sol: '10000000' },
   '/gpmm': { usdc: '15000', sol: '15000000' },
+  '/lsie': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -769,6 +770,10 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/lsie': bazaarExtension({ identity: 'Certusm1sa411sMpV9FPqU5dXAYhmmhygvxJ23S6hJ24', slot: '439000000' }, {
+    found: false,
+    slots: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -902,6 +907,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/nrpc': 'Live Solana cluster nodes that expose a public RPC endpoint',
         '/hwin': 'Live Solana signatures between a before cursor and an until cursor',
         '/gpmm': 'Live Solana program accounts filtered by dataSize and memcmp',
+        '/lsie': 'Live Solana leader-schedule slots for one identity in the epoch of a slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1125,7 +1131,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                 ? ['solana', 'signatures', 'before', 'until']
                                                                                                                                                                                                                                 : path === '/gpmm'
                                                                                                                                                                                                                                   ? ['solana', 'program', 'datasize', 'memcmp']
-                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                  : path === '/lsie'
+                                                                                                                                                                                                                                    ? ['solana', 'leader', 'identity', 'epoch']
+                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2186,6 +2194,23 @@ async function leaderScheduleByIdentity(identityRaw) {
   const slots = Array.isArray(map[identity]) ? map[identity] : []
   return {
     identity,
+    found: slots.length > 0,
+    slots: slots.length,
+    firstSlots: slots.slice(0, 16),
+    lastSlot: slots.length ? slots[slots.length - 1] : null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function leaderScheduleByIdentitySlot(identityRaw, slotRaw) {
+  const identity = requirePubkey('identity', identityRaw)
+  const slot = parseSlot(slotRaw)
+  const res = await rpc('getLeaderSchedule', [slot, { identity }])
+  const map = res.result && typeof res.result === 'object' ? res.result : {}
+  const slots = Array.isArray(map[identity]) ? map[identity] : []
+  return {
+    identity,
+    slot,
     found: slots.length > 0,
     slots: slots.length,
     firstSlots: slots.slice(0, 16),
@@ -4750,6 +4775,13 @@ const PAID = {
       url.searchParams.get('bytes'),
     ),
   },
+  '/lsie': {
+    validate(url) {
+      requirePubkey('identity', url.searchParams.get('identity'))
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => leaderScheduleByIdentitySlot(url.searchParams.get('identity'), url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -4869,6 +4901,7 @@ function catalogResources() {
     { path: '/nrpc', description: 'Live Solana cluster nodes that expose a public RPC endpoint' },
     { path: '/hwin', description: 'Live Solana signatures between a before cursor and an until cursor' },
     { path: '/gpmm', description: 'Live Solana program accounts filtered by dataSize and memcmp' },
+    { path: '/lsie', description: 'Live Solana leader-schedule slots for one identity in the epoch of a slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -5048,6 +5081,7 @@ const server = createServer(async (req, res) => {
               { name: 'cluster_rpc_nodes', description: 'Paid Solana cluster nodes that expose a public RPC endpoint. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'signature_history_window', description: 'Paid Solana signatures between a before cursor and an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, before: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'before', 'until'] } },
               { name: 'program_accounts_size_memcmp', description: 'Paid Solana program accounts filtered by dataSize and memcmp. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' } }, required: ['program', 'space', 'offset', 'bytes'] } },
+              { name: 'leader_schedule_identity_epoch', description: 'Paid Solana leader-schedule slots for one identity in the epoch of a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' }, slot: { type: 'string' } }, required: ['identity', 'slot'] } },
             ],
           },
         })
@@ -5167,6 +5201,7 @@ const server = createServer(async (req, res) => {
         cluster_rpc_nodes: '/nrpc',
         signature_history_window: '/hwin',
         program_accounts_size_memcmp: '/gpmm',
+        leader_schedule_identity_epoch: '/lsie',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
