@@ -100,6 +100,7 @@ const ROUTE_PRICE = {
   '/lfee': { usdc: '10000', sol: '10000000' },
   '/until': { usdc: '10000', sol: '10000000' },
   '/t22': { usdc: '10000', sol: '10000000' },
+  '/circw': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -624,6 +625,10 @@ const BAZAAR = {
     count: 0,
     tokens: [],
   }),
+  '/circw': bazaarExtension({}, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -731,6 +736,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/lfee': 'Live Solana account-specific prioritization fees',
         '/until': 'Live Solana paginated signatures with an until cursor',
         '/t22': 'Live Solana Token-2022 accounts for a wallet',
+        '/circw': 'Live Solana circulating largest native SOL accounts',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -902,7 +908,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                             ? ['solana', 'signatures', 'until', 'cursor']
                                                                                                                                                                             : path === '/t22'
                                                                                                                                                                               ? ['solana', 'token2022', 'owner', 'accounts']
-                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                              : path === '/circw'
+                                                                                                                                                                                ? ['solana', 'whales', 'circulating', 'sol']
+                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2014,6 +2022,21 @@ async function largestAccounts() {
     sol: Number((row.lamports / 1e9).toFixed(9)),
   }))
   return { count: accounts.length, accounts, generatedAt: new Date().toISOString() }
+}
+
+async function circulatingLargestAccounts() {
+  const res = await rpc('getLargestAccounts', [{ filter: 'circulating' }])
+  const accounts = (res.result?.value || []).slice(0, 20).map((row) => ({
+    address: row.address,
+    lamports: row.lamports,
+    sol: Number((row.lamports / 1e9).toFixed(9)),
+  }))
+  return {
+    filter: 'circulating',
+    count: accounts.length,
+    accounts,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 async function voteCounts() {
@@ -3616,6 +3639,10 @@ const PAID = {
     validate(url) { requirePubkey('owner', url.searchParams.get('owner')) },
     run: async (url) => token2022ByOwner(url.searchParams.get('owner')),
   },
+  '/circw': {
+    validate() {},
+    run: async () => circulatingLargestAccounts(),
+  },
 }
 
 function catalogResources() {
@@ -3709,6 +3736,7 @@ function catalogResources() {
     { path: '/lfee', description: 'Live Solana account-specific prioritization fees' },
     { path: '/until', description: 'Live Solana paginated signatures with an until cursor' },
     { path: '/t22', description: 'Live Solana Token-2022 accounts for a wallet' },
+    { path: '/circw', description: 'Live Solana circulating largest native SOL accounts' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3859,6 +3887,7 @@ const server = createServer(async (req, res) => {
               { name: 'local_priority_fees', description: 'Paid Solana account-specific prioritization fees. 0.01 USDC.', inputSchema: { type: 'object', properties: { accounts: { type: 'string' } }, required: ['accounts'] } },
               { name: 'signature_history_until', description: 'Paid Solana paginated signatures with an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'until'] } },
               { name: 'token2022_accounts', description: 'Paid Solana Token-2022 accounts for a wallet. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' } }, required: ['owner'] } },
+              { name: 'circulating_whales', description: 'Paid Solana circulating largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -3952,6 +3981,7 @@ const server = createServer(async (req, res) => {
         local_priority_fees: '/lfee',
         signature_history_until: '/until',
         token2022_accounts: '/t22',
+        circulating_whales: '/circw',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
