@@ -176,6 +176,7 @@ const ROUTE_PRICE = {
   '/rdap': { usdc: '10000', sol: '10000000' },
   '/nft': { usdc: '10000', sol: '10000000' },
   '/dex': { usdc: '10000', sol: '10000000' },
+  '/peg': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1203,6 +1204,14 @@ const BAZAAR = {
     priceUsd: null,
     liquidityUsd: null,
   }),
+  '/peg': bazaarExtension({
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  }, {
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    usdPrice: null,
+    deviationBps: null,
+    verdict: 'on_peg',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1386,6 +1395,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/rdap': 'Live RDAP registration data for a required domain, IP, or ASN',
         '/nft': 'Live Solana NFT collection floor and stats for a required Magic Eden symbol',
         '/dex': 'Live Solana token market data (price, liquidity, volume, change) for a required mint',
+        '/peg': 'Live Solana stablecoin peg deviation and depeg verdict for a required mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1709,7 +1719,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                                     ? ['solana', 'nft', 'floor', 'collection']
                                                                                                                                                                                                                                                                                                                                     : path === '/dex'
                                                                                                                                                                                                                                                                                                                                       ? ['solana', 'token', 'price', 'market-data']
-                                                                                                                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                                      : path === '/peg'
+                                                                                                                                                                                                                                                                                                                                        ? ['solana', 'stablecoin', 'peg', 'depeg']
+                                                                                                                                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2969,6 +2981,43 @@ async function jupiterPerpTrades(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     trades: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function stablecoinPeg(mintRaw) {
+  const mint = requirePubkey('mint', mintRaw)
+  const jUrl = 'https://lite-api.jup.ag/price/v3?ids=' + encodeURIComponent(mint)
+  const res = await fetch(jUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => ({}))
+  const row = body && body[mint]
+  if (!res.ok || !row || typeof row.usdPrice !== 'number') {
+    const err = new Error('no price found for mint')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const price = row.usdPrice
+  const deviation = price - 1
+  const deviationBps = Math.round(deviation * 10000)
+  const absBps = Math.abs(deviationBps)
+  // Peg-status thresholds in basis points from $1.00.
+  let verdict
+  if (absBps <= 20) verdict = 'on_peg'
+  else if (absBps <= 50) verdict = 'minor_deviation'
+  else if (absBps <= 200) verdict = 'watch'
+  else verdict = 'depeg_risk'
+  return {
+    mint,
+    usdPrice: price,
+    target: 1,
+    deviationBps,
+    deviationPct: deviation * 100,
+    direction: deviationBps === 0 ? 'flat' : deviationBps > 0 ? 'above_peg' : 'below_peg',
+    verdict,
+    liquidity: typeof row.liquidity === 'number' ? row.liquidity : null,
+    priceChange24h: typeof row.priceChange24h === 'number' ? row.priceChange24h : null,
+    source: 'jupiter',
     generatedAt: new Date().toISOString(),
   }
 }
@@ -7150,6 +7199,12 @@ const PAID = {
     },
     run: async (url) => dexTokenMarket(url.searchParams.get('mint')),
   },
+  '/peg': {
+    validate(url) {
+      requirePubkey('mint', url.searchParams.get('mint'))
+    },
+    run: async (url) => stablecoinPeg(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -7319,6 +7374,7 @@ function catalogResources() {
     { path: '/rdap', description: 'Live RDAP registration data for a required domain, IP, or ASN' },
     { path: '/nft', description: 'Live Solana NFT collection floor and stats for a required Magic Eden symbol' },
     { path: '/dex', description: 'Live Solana token market data (price, liquidity, volume, change) for a required mint' },
+    { path: '/peg', description: 'Live Solana stablecoin peg deviation and depeg verdict for a required mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7548,6 +7604,7 @@ const server = createServer(async (req, res) => {
               { name: 'rdap_lookup', description: 'Paid RDAP registration data for a required domain, IP, or ASN. 0.01 USDC. kind=domain|ip|asn, q=value.', inputSchema: { type: 'object', properties: { kind: { type: 'string' }, q: { type: 'string' } }, required: ['kind', 'q'] } },
               { name: 'nft_collection_stats', description: 'Paid Solana NFT collection floor and stats for a required Magic Eden symbol. 0.01 USDC.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } },
               { name: 'dex_token_market', description: 'Paid Solana token market data (price, liquidity, 24h volume, price change) for a required mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'stablecoin_peg', description: 'Paid Solana stablecoin peg deviation (bps from $1) and depeg verdict for a required mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -7717,6 +7774,7 @@ const server = createServer(async (req, res) => {
         rdap_lookup: '/rdap',
         nft_collection_stats: '/nft',
         dex_token_market: '/dex',
+        stablecoin_peg: '/peg',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
