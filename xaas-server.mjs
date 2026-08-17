@@ -29,6 +29,7 @@ const ROUTE_PRICE = {
   '/holders': { usdc: '15000', sol: '15000000' },
   '/tls': { usdc: '10000', sol: '10000000' },
   '/fresh': { usdc: '5000', sol: '5000000' },
+  '/tz': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -212,6 +213,12 @@ const BAZAAR = {
     status: 200,
     sha256: '0'.repeat(64),
   }),
+  '/tz': bazaarExtension({ iso: '2026-08-17T13:00:00Z', to: 'Europe/Rome' }, {
+    iso: '2026-08-17T13:00:00.000Z',
+    to: 'Europe/Rome',
+    local: '2026-08-17 15:00:00',
+    offset: '+02:00',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -248,6 +255,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/holders': 'Largest token accounts for a Solana mint',
         '/tls': 'TLS certificate expiry and issuer for a public host',
         '/fresh': 'Timestamped content fingerprint for a public HTTPS URL',
+        '/tz': 'Convert a timestamp into any IANA timezone',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -277,7 +285,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                               ? ['tls', 'ssl', 'certificate', 'security']
                               : path === '/fresh'
                                 ? ['freshness', 'hash', 'monitor', 'change']
-                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                : path === '/tz'
+                                  ? ['timezone', 'convert', 'iana', 'calendar']
+                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -610,6 +620,52 @@ async function contentFresh(target) {
   }
 }
 
+function requireIana(name, value) {
+  const zone = requireText(name, value)
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: zone }).format(new Date())
+  } catch {
+    const err = new Error(name + ' must be an IANA timezone')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return zone
+}
+
+function convertTimezone(iso, to) {
+  const zone = requireIana('to', to)
+  const date = iso ? new Date(iso) : new Date()
+  if (Number.isNaN(date.getTime())) {
+    const err = new Error('iso must be a valid timestamp')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date)
+  const pick = (type) => parts.find((part) => part.type === type)?.value
+  const local = `${pick('year')}-${pick('month')}-${pick('day')} ${pick('hour')}:${pick('minute')}:${pick('second')}`
+  const offsetName = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' })
+    .formatToParts(date)
+    .find((part) => part.type === 'timeZoneName')?.value || 'GMT'
+  return {
+    iso: date.toISOString(),
+    to: zone,
+    local,
+    offset: offsetName.replace('GMT', '').replace('UTC', '') || '+00:00',
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 function requireHost(name, value) {
   const host = requireText(name, value).replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].toLowerCase()
   if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host)) {
@@ -910,6 +966,10 @@ const PAID = {
     },
     run: async (url) => contentFresh(url.searchParams.get('url')),
   },
+  '/tz': {
+    validate(url) { requireIana('to', url.searchParams.get('to')) },
+    run: async (url) => convertTimezone(url.searchParams.get('iso'), url.searchParams.get('to')),
+  },
 }
 
 function catalogResources() {
@@ -932,6 +992,7 @@ function catalogResources() {
     { path: '/holders', description: 'Largest token accounts for a mint. Query: mint' },
     { path: '/tls', description: 'TLS certificate expiry and issuer. Query: host' },
     { path: '/fresh', description: 'Timestamped content fingerprint for a public HTTPS URL. Query: url' },
+    { path: '/tz', description: 'Convert a timestamp into any IANA timezone. Query: to, optional iso' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1011,6 +1072,7 @@ const server = createServer(async (req, res) => {
               { name: 'token_holders', description: 'Paid largest Solana token accounts for a mint. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'tls_check', description: 'Paid TLS certificate expiry check for a public host. 0.01 USDC.', inputSchema: { type: 'object', properties: { host: { type: 'string' } }, required: ['host'] } },
               { name: 'content_fresh', description: 'Paid HTTPS content fingerprint (sha256 + headers). 0.005 USDC.', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
+              { name: 'timezone_convert', description: 'Paid IANA timezone convert. 0.005 USDC. Query: to, optional iso.', inputSchema: { type: 'object', properties: { to: { type: 'string' }, iso: { type: 'string' } }, required: ['to'] } },
             ],
           },
         })
@@ -1033,6 +1095,7 @@ const server = createServer(async (req, res) => {
         token_holders: '/holders',
         tls_check: '/tls',
         content_fresh: '/fresh',
+        timezone_convert: '/tz',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
