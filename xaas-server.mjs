@@ -127,6 +127,7 @@ const ROUTE_PRICE = {
   '/hwin': { usdc: '10000', sol: '10000000' },
   '/gpmm': { usdc: '15000', sol: '15000000' },
   '/lsie': { usdc: '10000', sol: '10000000' },
+  '/ownp': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -774,6 +775,13 @@ const BAZAAR = {
     found: false,
     slots: 0,
   }),
+  '/ownp': bazaarExtension({
+    owner: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+  }, {
+    count: 0,
+    tokens: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -908,6 +916,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/hwin': 'Live Solana signatures between a before cursor and an until cursor',
         '/gpmm': 'Live Solana program accounts filtered by dataSize and memcmp',
         '/lsie': 'Live Solana leader-schedule slots for one identity in the epoch of a slot',
+        '/ownp': 'Live Solana token accounts for a wallet filtered by one token program',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1133,7 +1142,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                   ? ['solana', 'program', 'datasize', 'memcmp']
                                                                                                                                                                                                                                   : path === '/lsie'
                                                                                                                                                                                                                                     ? ['solana', 'leader', 'identity', 'epoch']
-                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                    : path === '/ownp'
+                                                                                                                                                                                                                                      ? ['solana', 'tokens', 'owner', 'program']
+                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1873,6 +1884,30 @@ async function token2022ByOwner(ownerRaw) {
   return {
     owner,
     program: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
+    count: rows.length,
+    tokens: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function tokenAccountsByOwnerProgram(ownerRaw, programRaw) {
+  const owner = requirePubkey('owner', ownerRaw)
+  const program = requirePubkey('program', programRaw)
+  const res = await rpc('getTokenAccountsByOwner', [
+    owner,
+    { programId: program },
+    { encoding: 'jsonParsed' },
+  ])
+  const rows = (res.result?.value ?? []).slice(0, 20).map((item) => ({
+    account: item.pubkey,
+    mint: item.account.data.parsed?.info?.mint ?? null,
+    amount: item.account.data.parsed?.info?.tokenAmount?.uiAmountString ?? '0',
+    decimals: item.account.data.parsed?.info?.tokenAmount?.decimals ?? null,
+    program: item.account.owner,
+  }))
+  return {
+    owner,
+    program,
     count: rows.length,
     tokens: rows,
     generatedAt: new Date().toISOString(),
@@ -4782,6 +4817,13 @@ const PAID = {
     },
     run: async (url) => leaderScheduleByIdentitySlot(url.searchParams.get('identity'), url.searchParams.get('slot')),
   },
+  '/ownp': {
+    validate(url) {
+      requirePubkey('owner', url.searchParams.get('owner'))
+      requirePubkey('program', url.searchParams.get('program'))
+    },
+    run: async (url) => tokenAccountsByOwnerProgram(url.searchParams.get('owner'), url.searchParams.get('program')),
+  },
 }
 
 function catalogResources() {
@@ -4902,6 +4944,7 @@ function catalogResources() {
     { path: '/hwin', description: 'Live Solana signatures between a before cursor and an until cursor' },
     { path: '/gpmm', description: 'Live Solana program accounts filtered by dataSize and memcmp' },
     { path: '/lsie', description: 'Live Solana leader-schedule slots for one identity in the epoch of a slot' },
+    { path: '/ownp', description: 'Live Solana token accounts for a wallet filtered by one token program' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -5082,6 +5125,7 @@ const server = createServer(async (req, res) => {
               { name: 'signature_history_window', description: 'Paid Solana signatures between a before cursor and an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, before: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'before', 'until'] } },
               { name: 'program_accounts_size_memcmp', description: 'Paid Solana program accounts filtered by dataSize and memcmp. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' } }, required: ['program', 'space', 'offset', 'bytes'] } },
               { name: 'leader_schedule_identity_epoch', description: 'Paid Solana leader-schedule slots for one identity in the epoch of a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' }, slot: { type: 'string' } }, required: ['identity', 'slot'] } },
+              { name: 'token_accounts_owner_program', description: 'Paid Solana token accounts for a wallet filtered by one token program. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, program: { type: 'string' } }, required: ['owner', 'program'] } },
             ],
           },
         })
@@ -5202,6 +5246,7 @@ const server = createServer(async (req, res) => {
         signature_history_window: '/hwin',
         program_accounts_size_memcmp: '/gpmm',
         leader_schedule_identity_epoch: '/lsie',
+        token_accounts_owner_program: '/ownp',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
