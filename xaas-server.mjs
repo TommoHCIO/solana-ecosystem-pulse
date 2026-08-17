@@ -121,6 +121,7 @@ const ROUTE_PRICE = {
   '/rewm': { usdc: '10000', sol: '10000000' },
   '/nshd': { usdc: '10000', sol: '10000000' },
   '/rwme': { usdc: '10000', sol: '10000000' },
+  '/gpmd': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -729,6 +730,16 @@ const BAZAAR = {
     count: 0,
     found: 0,
   }),
+  '/gpmd': bazaarExtension({
+    program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    offset: '0',
+    bytes: '11111111111111111111111111111111',
+    slice: '0',
+    length: '32',
+  }, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -857,6 +868,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/rewm': 'Live Solana inflation rewards for multiple stake or vote addresses',
         '/nshd': 'Live Solana cluster shred-version histogram',
         '/rwme': 'Live Solana inflation rewards for multiple addresses in a chosen epoch',
+        '/gpmd': 'Live Solana program accounts filtered by memcmp with a data slice',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1070,7 +1082,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                       ? ['solana', 'cluster', 'shred', 'version']
                                                                                                                                                                                                                       : path === '/rwme'
                                                                                                                                                                                                                         ? ['solana', 'inflation', 'rewards', 'epoch']
-                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                        : path === '/gpmd'
+                                                                                                                                                                                                                          ? ['solana', 'program', 'memcmp', 'slice']
+                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2734,6 +2748,38 @@ async function programAccountsMemcmp(programRaw, offsetRaw, bytesRaw) {
     program,
     offset,
     bytes,
+    count: rows.length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function programAccountsMemcmpSlice(programRaw, offsetRaw, bytesRaw, sliceRaw, lengthRaw) {
+  const program = requirePubkey('program', programRaw)
+  const offset = parseOffset(offsetRaw)
+  const bytes = parseMemcmpBytes(bytesRaw)
+  const { offset: slice, length } = parseDataSlice(sliceRaw, lengthRaw)
+  const res = await rpc('getProgramAccounts', [
+    program,
+    {
+      encoding: 'base64',
+      dataSlice: { offset: slice, length },
+      filters: [{ memcmp: { offset, bytes } }],
+    },
+  ])
+  const rows = (Array.isArray(res.result) ? res.result : []).slice(0, 20).map((item) => ({
+    pubkey: item.pubkey,
+    lamports: item.account?.lamports ?? null,
+    owner: item.account?.owner ?? null,
+    data: Array.isArray(item.account?.data) ? item.account.data[0] : null,
+  }))
+  return {
+    program,
+    offset,
+    bytes,
+    slice,
+    length,
+    encoding: 'base64',
     count: rows.length,
     accounts: rows,
     generatedAt: new Date().toISOString(),
@@ -4524,6 +4570,21 @@ const PAID = {
     },
     run: async (url) => inflationRewardsManyEpoch(url.searchParams.get('addresses'), url.searchParams.get('epoch')),
   },
+  '/gpmd': {
+    validate(url) {
+      requirePubkey('program', url.searchParams.get('program'))
+      parseOffset(url.searchParams.get('offset'))
+      parseMemcmpBytes(url.searchParams.get('bytes'))
+      parseDataSlice(url.searchParams.get('slice'), url.searchParams.get('length'))
+    },
+    run: async (url) => programAccountsMemcmpSlice(
+      url.searchParams.get('program'),
+      url.searchParams.get('offset'),
+      url.searchParams.get('bytes'),
+      url.searchParams.get('slice'),
+      url.searchParams.get('length'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -4638,6 +4699,7 @@ function catalogResources() {
     { path: '/rewm', description: 'Live Solana inflation rewards for multiple stake or vote addresses' },
     { path: '/nshd', description: 'Live Solana cluster shred-version histogram' },
     { path: '/rwme', description: 'Live Solana inflation rewards for multiple addresses in a chosen epoch' },
+    { path: '/gpmd', description: 'Live Solana program accounts filtered by memcmp with a data slice' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4812,6 +4874,7 @@ const server = createServer(async (req, res) => {
               { name: 'inflation_rewards_many', description: 'Paid Solana inflation rewards for multiple stake or vote addresses. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' } }, required: ['addresses'] } },
               { name: 'cluster_shred_versions', description: 'Paid Solana cluster shred-version histogram. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'inflation_rewards_many_epoch', description: 'Paid Solana inflation rewards for multiple addresses in a chosen epoch. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, epoch: { type: 'string' } }, required: ['addresses', 'epoch'] } },
+              { name: 'program_accounts_memcmp_slice', description: 'Paid Solana program accounts filtered by memcmp with a data slice. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slice: { type: 'string' }, length: { type: 'string' } }, required: ['program', 'offset', 'bytes', 'slice', 'length'] } },
             ],
           },
         })
@@ -4926,6 +4989,7 @@ const server = createServer(async (req, res) => {
         inflation_rewards_many: '/rewm',
         cluster_shred_versions: '/nshd',
         inflation_rewards_many_epoch: '/rwme',
+        program_accounts_memcmp_slice: '/gpmd',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
