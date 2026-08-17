@@ -18,6 +18,7 @@ const ROUTE_PRICE = {
   '/preflight': { usdc: '150000', sol: '150000000' },
   '/extract': { usdc: '20000', sol: '20000000' },
   '/search': { usdc: '10000', sol: '10000000' },
+  '/screen': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -153,6 +154,12 @@ const BAZAAR = {
     count: 3,
     results: [{ title: 'example', url: 'https://example.com', snippet: '...' }],
   }),
+  '/screen': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    hit: false,
+    verdict: 'clear',
+    sources: ['ofac-sdn'],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -180,6 +187,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/preflight': 'Install-safety preflight for a package list',
         '/extract': 'Fetch a public URL and return title plus plain text',
         '/search': 'Web search results for a query',
+        '/screen': 'OFAC SDN screen for a Solana wallet address',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -191,7 +199,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
             ? ['extract', 'fetch', 'html', 'search']
             : path === '/search'
               ? ['search', 'web', 'ddg']
-              : ['solana', 'rpc', 'balance', 'chain-data'],
+              : path === '/screen'
+                ? ['ofac', 'sanctions', 'screen', 'solana']
+                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -503,6 +513,24 @@ async function extractPage(target) {
   }
 }
 
+async function ofacScreen(address) {
+  const res = await fetch('https://www.treasury.gov/ofac/downloads/sdn.xml', {
+    headers: { accept: 'application/xml,text/xml', 'user-agent': 'solana-pulse-xaas' },
+    signal: AbortSignal.timeout(20000),
+  })
+  const xml = await res.text()
+  const needle = address.toLowerCase()
+  const hit = xml.toLowerCase().includes(needle)
+  return {
+    address,
+    hit,
+    verdict: hit ? 'hit' : 'clear',
+    source: 'https://www.treasury.gov/ofac/downloads/sdn.xml',
+    sourceStatus: res.status,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 function installPreflight(raw) {
   const packages = parsePackages(raw)
   const rows = packages.map((pkg) => {
@@ -569,6 +597,10 @@ const PAID = {
     validate(url) { requireText('q', url.searchParams.get('q')) },
     run: async (url) => webSearch(url.searchParams.get('q')),
   },
+  '/screen': {
+    validate(url) { requirePubkey('address', url.searchParams.get('address')) },
+    run: async (url) => ofacScreen(url.searchParams.get('address')),
+  },
 }
 
 function catalogResources() {
@@ -582,6 +614,7 @@ function catalogResources() {
     { path: '/preflight', description: 'Install-safety preflight. Query: packages=name@version,...' },
     { path: '/extract', description: 'Fetch a public HTTPS URL and return title plus plain text. Query: url' },
     { path: '/search', description: 'Web search. Query: q' },
+    { path: '/screen', description: 'OFAC SDN screen for a Solana wallet. Query: address' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -652,6 +685,7 @@ const server = createServer(async (req, res) => {
               { name: 'install_preflight', description: 'Paid install-safety heuristic. 0.15 USDC.', inputSchema: { type: 'object', properties: { packages: { type: 'string' } }, required: ['packages'] } },
               { name: 'extract_url', description: 'Paid HTTPS fetch + text extract. 0.02 USDC.', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
               { name: 'web_search', description: 'Paid web search. 0.01 USDC.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
+              { name: 'ofac_screen', description: 'Paid OFAC SDN screen for a Solana address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
             ],
           },
         })
@@ -665,6 +699,7 @@ const server = createServer(async (req, res) => {
         install_preflight: '/preflight',
         extract_url: '/extract',
         web_search: '/search',
+        ofac_screen: '/screen',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
