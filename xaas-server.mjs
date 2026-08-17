@@ -98,6 +98,7 @@ const ROUTE_PRICE = {
   '/curv': { usdc: '5000', sol: '5000000' },
   '/cpi': { usdc: '10000', sol: '10000000' },
   '/lfee': { usdc: '10000', sol: '10000000' },
+  '/until': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -614,6 +615,10 @@ const BAZAAR = {
     samples: 0,
     median: 0,
   }),
+  '/until': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA', until: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW' }, {
+    count: 0,
+    signatures: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -719,6 +724,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/curv': 'Live Solana pubkey on-curve versus PDA check',
         '/cpi': 'Live Solana parsed inner CPI instructions for a signature',
         '/lfee': 'Live Solana account-specific prioritization fees',
+        '/until': 'Live Solana paginated signatures with an until cursor',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -886,7 +892,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                         ? ['solana', 'transaction', 'cpi', 'inner']
                                                                                                                                                                         : path === '/lfee'
                                                                                                                                                                           ? ['solana', 'fees', 'priority', 'local']
-                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                          : path === '/until'
+                                                                                                                                                                            ? ['solana', 'signatures', 'until', 'cursor']
+                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3043,6 +3051,26 @@ async function signatureHistory(addressRaw, beforeRaw) {
   }
 }
 
+async function signatureHistoryUntil(addressRaw, untilRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const until = requireSig('until', untilRaw)
+  const res = await rpc('getSignaturesForAddress', [address, { limit: 20, until }])
+  const rows = (res.result || []).map((item) => ({
+    signature: item.signature,
+    slot: item.slot,
+    err: item.err || null,
+    iso: item.blockTime ? new Date(item.blockTime * 1000).toISOString() : null,
+  }))
+  return {
+    address,
+    until,
+    count: rows.length,
+    next: rows.length ? rows[0].signature : null,
+    signatures: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function walletSnapshot(address) {
   const [balance, tokens] = await Promise.all([solBalance(address), solTokens(address)])
   return {
@@ -3547,6 +3575,13 @@ const PAID = {
     validate(url) { parseFeeAccounts(url.searchParams.get('accounts')) },
     run: async (url) => localPriorityFees(url.searchParams.get('accounts')),
   },
+  '/until': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+      requireSig('until', url.searchParams.get('until'))
+    },
+    run: async (url) => signatureHistoryUntil(url.searchParams.get('address'), url.searchParams.get('until')),
+  },
 }
 
 function catalogResources() {
@@ -3638,6 +3673,7 @@ function catalogResources() {
     { path: '/curv', description: 'Live Solana pubkey on-curve versus PDA check' },
     { path: '/cpi', description: 'Live Solana parsed inner CPI instructions for a signature' },
     { path: '/lfee', description: 'Live Solana account-specific prioritization fees' },
+    { path: '/until', description: 'Live Solana paginated signatures with an until cursor' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3786,6 +3822,7 @@ const server = createServer(async (req, res) => {
               { name: 'pubkey_curve', description: 'Paid Solana pubkey on-curve versus PDA check. 0.005 USDC.', inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] } },
               { name: 'inner_instructions', description: 'Paid Solana parsed inner CPI instructions. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
               { name: 'local_priority_fees', description: 'Paid Solana account-specific prioritization fees. 0.01 USDC.', inputSchema: { type: 'object', properties: { accounts: { type: 'string' } }, required: ['accounts'] } },
+              { name: 'signature_history_until', description: 'Paid Solana paginated signatures with an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'until'] } },
             ],
           },
         })
@@ -3877,6 +3914,7 @@ const server = createServer(async (req, res) => {
         pubkey_curve: '/curv',
         inner_instructions: '/cpi',
         local_priority_fees: '/lfee',
+        signature_history_until: '/until',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
