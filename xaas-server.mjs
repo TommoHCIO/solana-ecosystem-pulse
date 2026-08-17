@@ -107,6 +107,7 @@ const ROUTE_PRICE = {
   '/bpid': { usdc: '10000', sol: '10000000' },
   '/rewe': { usdc: '10000', sol: '10000000' },
   '/lsid': { usdc: '10000', sol: '10000000' },
+  '/mcs': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -659,6 +660,10 @@ const BAZAAR = {
     slots: 0,
     firstSlots: [],
   }),
+  '/mcs': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA', slot: '439000000' }, {
+    count: 0,
+    signatures: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -773,6 +778,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/bpid': 'Live Solana block production for one validator identity',
         '/rewe': 'Live Solana inflation reward for a chosen epoch',
         '/lsid': 'Live Solana leader-schedule slots for one validator identity',
+        '/mcs': 'Live Solana signatures after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -958,7 +964,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                           ? ['solana', 'reward', 'inflation', 'epoch']
                                                                                                                                                                                           : path === '/lsid'
                                                                                                                                                                                             ? ['solana', 'leader', 'schedule', 'identity']
-                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                            : path === '/mcs'
+                                                                                                                                                                                              ? ['solana', 'signatures', 'mincontext', 'slot']
+                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3299,6 +3307,26 @@ async function signatureHistoryUntil(addressRaw, untilRaw) {
   }
 }
 
+async function signaturesMinContextSlot(addressRaw, slotRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const minContextSlot = parseSlot(slotRaw)
+  const res = await rpc('getSignaturesForAddress', [address, { limit: 20, minContextSlot }])
+  const rows = (res.result || []).map((item) => ({
+    signature: item.signature,
+    slot: item.slot,
+    err: item.err || null,
+    iso: item.blockTime ? new Date(item.blockTime * 1000).toISOString() : null,
+  }))
+  return {
+    address,
+    minContextSlot,
+    count: rows.length,
+    next: rows.length ? rows[rows.length - 1].signature : null,
+    signatures: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function walletSnapshot(address) {
   const [balance, tokens] = await Promise.all([solBalance(address), solTokens(address)])
   return {
@@ -3857,6 +3885,13 @@ const PAID = {
     validate(url) { requirePubkey('identity', url.searchParams.get('identity')) },
     run: async (url) => leaderScheduleByIdentity(url.searchParams.get('identity')),
   },
+  '/mcs': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => signaturesMinContextSlot(url.searchParams.get('address'), url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -3957,6 +3992,7 @@ function catalogResources() {
     { path: '/bpid', description: 'Live Solana block production for one validator identity' },
     { path: '/rewe', description: 'Live Solana inflation reward for a chosen epoch' },
     { path: '/lsid', description: 'Live Solana leader-schedule slots for one validator identity' },
+    { path: '/mcs', description: 'Live Solana signatures after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4117,6 +4153,7 @@ const server = createServer(async (req, res) => {
               { name: 'block_production_identity', description: 'Paid Solana block production for one validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
               { name: 'inflation_reward_epoch', description: 'Paid Solana inflation reward for a chosen epoch. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, epoch: { type: 'string' } }, required: ['address', 'epoch'] } },
               { name: 'leader_schedule_identity', description: 'Paid Solana leader-schedule slots for one validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
+              { name: 'signatures_min_context', description: 'Paid Solana signatures after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' } }, required: ['address', 'slot'] } },
             ],
           },
         })
@@ -4217,6 +4254,7 @@ const server = createServer(async (req, res) => {
         block_production_identity: '/bpid',
         inflation_reward_epoch: '/rewe',
         leader_schedule_identity: '/lsid',
+        signatures_min_context: '/mcs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
