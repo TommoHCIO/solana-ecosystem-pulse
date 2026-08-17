@@ -68,6 +68,7 @@ const ROUTE_PRICE = {
   '/reward': { usdc: '10000', sol: '10000000' },
   '/btime': { usdc: '5000', sol: '5000000' },
   '/batch': { usdc: '10000', sol: '10000000' },
+  '/tab': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -426,6 +427,12 @@ const BAZAAR = {
     found: 1,
     accounts: [],
   }),
+  '/tab': bazaarExtension({ account: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    account: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    amount: '0',
+    decimals: 6,
+    uiAmount: '0',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -501,6 +508,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/reward': 'Live Solana inflation reward for a stake or vote address',
         '/btime': 'Live Solana estimated production time for a slot',
         '/batch': 'Live Solana getMultipleAccounts batch lookup',
+        '/tab': 'Live Solana SPL token-account balance',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -608,7 +616,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                             ? ['solana', 'block', 'time', 'unix']
                                                                                                             : path === '/batch'
                                                                                                               ? ['solana', 'accounts', 'batch', 'lookup']
-                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                              : path === '/tab'
+                                                                                                                ? ['solana', 'spl', 'token', 'balance']
+                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1414,6 +1424,25 @@ async function transferFee(mint) {
   }
 }
 
+async function tokenAccountBalance(account) {
+  const key = requirePubkey('account', account)
+  const res = await rpc('getTokenAccountBalance', [key])
+  const value = res.result?.value
+  if (!value) {
+    const err = new Error('token account balance not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  return {
+    account: key,
+    amount: value.amount,
+    decimals: value.decimals,
+    uiAmount: value.uiAmountString || value.uiAmount,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function tokenSupply(mint) {
   const res = await rpc('getTokenSupply', [mint])
   const value = res.result?.value
@@ -2139,6 +2168,10 @@ const PAID = {
     validate(url) { parseAddresses(url.searchParams.get('addresses')) },
     run: async (url) => multipleAccounts(url.searchParams.get('addresses')),
   },
+  '/tab': {
+    validate(url) { requirePubkey('account', url.searchParams.get('account')) },
+    run: async (url) => tokenAccountBalance(url.searchParams.get('account')),
+  },
 }
 
 function catalogResources() {
@@ -2200,6 +2233,7 @@ function catalogResources() {
     { path: '/reward', description: 'Live Solana inflation reward for a stake or vote address' },
     { path: '/btime', description: 'Live Solana estimated production time for a slot' },
     { path: '/batch', description: 'Live Solana getMultipleAccounts batch lookup' },
+    { path: '/tab', description: 'Live Solana SPL token-account balance' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2318,6 +2352,7 @@ const server = createServer(async (req, res) => {
               { name: 'inflation_reward', description: 'Paid Solana inflation reward for a stake or vote address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'block_time', description: 'Paid Solana getBlockTime for a slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'multiple_accounts', description: 'Paid Solana getMultipleAccounts batch lookup. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' } }, required: ['addresses'] } },
+              { name: 'token_account_balance', description: 'Paid Solana SPL token-account balance. 0.005 USDC.', inputSchema: { type: 'object', properties: { account: { type: 'string' } }, required: ['account'] } },
             ],
           },
         })
@@ -2379,6 +2414,7 @@ const server = createServer(async (req, res) => {
         inflation_reward: '/reward',
         block_time: '/btime',
         multiple_accounts: '/batch',
+        token_account_balance: '/tab',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
