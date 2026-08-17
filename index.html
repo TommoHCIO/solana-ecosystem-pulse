@@ -153,14 +153,16 @@
       ["SOL USD", "$" + fmt(snap.economics.solUsd, 2)],
       ["TVL USD", "$" + fmt(snap.economics.tvlUsd, 0)],
     ];
-    document.getElementById("cards").innerHTML = cards.map(([k,v]) =>
-      `<div class="card"><div class="label">${k}</div><div class="value">${v}</div></div>`
-    ).join("");
+    document.getElementById("cards").innerHTML = cards.map(function(pair) {
+      return '<div class="card"><div class="label">' + pair[0] + '</div><div class="value">' + pair[1] + '</div></div>';
+    }).join("");
     const anomalies = snap.anomalies.length ? snap.anomalies : ["none"];
-    document.getElementById("anomalies").innerHTML = anomalies.map(a => `<li class="${snap.anomalies.length ? "bad" : ""}">${a}</li>`).join("");
-    document.getElementById("validators").innerHTML = snap.validators.top.map(v =>
-      `<tr><td><code>${v.votePubkey}</code></td><td>${v.commission}%</td><td>${fmt(v.activatedStake/1e9, 0)}</td></tr>`
-    ).join("");
+    document.getElementById("anomalies").innerHTML = anomalies.map(function(a) {
+      return '<li class="' + (snap.anomalies.length ? "bad" : "") + '">' + a + "</li>";
+    }).join("");
+    document.getElementById("validators").innerHTML = snap.validators.top.map(function(v) {
+      return "<tr><td><code>" + v.votePubkey + "</code></td><td>" + v.commission + "%</td><td>" + fmt(v.activatedStake/1e9, 0) + "</td></tr>";
+    }).join("");
   </script>
 </body>
 </html>
