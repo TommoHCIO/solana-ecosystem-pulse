@@ -160,6 +160,7 @@ const ROUTE_PRICE = {
   '/slcs': { usdc: '5000', sol: '5000000' },
   '/htcs': { usdc: '5000', sol: '5000000' },
   '/epcs': { usdc: '5000', sol: '5000000' },
+  '/txcs': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1063,6 +1064,11 @@ const BAZAAR = {
     blockHeight: 0,
     transactionCount: 0,
   }),
+  '/txcs': bazaarExtension({
+    slot: '439000000',
+  }, {
+    transactionCount: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1230,6 +1236,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/slcs': 'Live Solana current slot after a minimum context slot',
         '/htcs': 'Live Solana finalized block height after a minimum context slot',
         '/epcs': 'Live Solana current epoch progress after a minimum context slot',
+        '/txcs': 'Live Solana ledger transaction count after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1521,7 +1528,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                     ? ['solana', 'rpc', 'block', 'slot']
                                                                                                                                                                                                                                                                                                     : path === '/epcs'
                                                                                                                                                                                                                                                                                                       ? ['solana', 'rpc', 'epoch', 'slot']
-                                                                                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                      : path === '/txcs'
+                                                                                                                                                                                                                                                                                                        ? ['solana', 'rpc', 'tx', 'slot']
+                                                                                                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3004,6 +3013,16 @@ async function currentLeader() {
 async function transactionCount() {
   const res = await rpc('getTransactionCount', [])
   return {
+    transactionCount: res.result,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function transactionCountMinContext(slotRaw) {
+  const minContextSlot = parseSlot(slotRaw)
+  const res = await rpc('getTransactionCount', [{ minContextSlot }])
+  return {
+    minContextSlot,
     transactionCount: res.result,
     generatedAt: new Date().toISOString(),
   }
@@ -6328,6 +6347,14 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/txcs': {
+    validate(url) {
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => transactionCountMinContext(
+      url.searchParams.get('slot'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6481,6 +6508,7 @@ function catalogResources() {
     { path: '/slcs', description: 'Live Solana current slot after a minimum context slot' },
     { path: '/htcs', description: 'Live Solana finalized block height after a minimum context slot' },
     { path: '/epcs', description: 'Live Solana current epoch progress after a minimum context slot' },
+    { path: '/txcs', description: 'Live Solana ledger transaction count after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6694,6 +6722,7 @@ const server = createServer(async (req, res) => {
               { name: 'current_slot_min_context', description: 'Paid Solana current slot after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'block_height_min_context', description: 'Paid Solana finalized block height after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'epoch_info_min_context', description: 'Paid Solana current epoch progress after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'transaction_count_min_context', description: 'Paid Solana ledger transaction count after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
             ],
           },
         })
@@ -6847,6 +6876,7 @@ const server = createServer(async (req, res) => {
         current_slot_min_context: '/slcs',
         block_height_min_context: '/htcs',
         epoch_info_min_context: '/epcs',
+        transaction_count_min_context: '/txcs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
