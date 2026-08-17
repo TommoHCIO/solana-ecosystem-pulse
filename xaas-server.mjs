@@ -87,6 +87,7 @@ const ROUTE_PRICE = {
   '/xfer': { usdc: '15000', sol: '15000000' },
   '/own': { usdc: '10000', sol: '10000000' },
   '/hist': { usdc: '10000', sol: '10000000' },
+  '/stk': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -550,6 +551,12 @@ const BAZAAR = {
     before: null,
     signatures: [],
   }),
+  '/stk': bazaarExtension({ stake: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    voter: '',
+    activationEpoch: 0,
+    deactivationEpoch: null,
+    lamports: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -644,6 +651,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/xfer': 'Live Solana parsed SOL and SPL token transfers for a signature',
         '/own': 'Live Solana SPL token balance for a wallet and mint',
         '/hist': 'Live Solana paginated signatures for an address with a before cursor',
+        '/stk': 'Live Solana parsed stake account delegation and authorities',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -789,7 +797,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                   ? ['solana', 'token', 'owner', 'mint']
                                                                                                                                                   : path === '/hist'
                                                                                                                                                     ? ['solana', 'signatures', 'history', 'before']
-                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                    : path === '/stk'
+                                                                                                                                                      ? ['solana', 'stake', 'delegation', 'account']
+                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2399,6 +2409,35 @@ async function addressLookupTable(tableRaw) {
   }
 }
 
+async function stakeAccount(stakeRaw) {
+  const stake = requirePubkey('stake', stakeRaw)
+  const res = await rpc('getAccountInfo', [stake, { encoding: 'jsonParsed', commitment: 'confirmed' }])
+  const value = res.result?.value
+  if (!value) {
+    const err = new Error('stake account not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const info = value.data?.parsed?.info || {}
+  const stakeInfo = info.stake?.delegation || info.delegation || {}
+  const meta = info.meta || {}
+  return {
+    stake,
+    owner: value.owner,
+    lamports: value.lamports,
+    voter: stakeInfo.voter ?? null,
+    stakeLamports: stakeInfo.stake ?? null,
+    activationEpoch: stakeInfo.activationEpoch ?? null,
+    deactivationEpoch: stakeInfo.deactivationEpoch ?? null,
+    warmupCooldownRate: stakeInfo.warmupCooldownRate ?? null,
+    staker: meta.authorized?.staker ?? null,
+    withdrawer: meta.authorized?.withdrawer ?? null,
+    lockup: meta.lockup ?? null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function nonceAccount(nonceRaw) {
   const nonce = requirePubkey('nonce', nonceRaw)
   const res = await rpc('getAccountInfo', [nonce, { encoding: 'jsonParsed', commitment: 'confirmed' }])
@@ -2926,6 +2965,10 @@ const PAID = {
     },
     run: async (url) => signatureHistory(url.searchParams.get('address'), url.searchParams.get('before')),
   },
+  '/stk': {
+    validate(url) { requirePubkey('stake', url.searchParams.get('stake')) },
+    run: async (url) => stakeAccount(url.searchParams.get('stake')),
+  },
 }
 
 function catalogResources() {
@@ -3006,6 +3049,7 @@ function catalogResources() {
     { path: '/xfer', description: 'Live Solana parsed SOL and SPL token transfers for a signature' },
     { path: '/own', description: 'Live Solana SPL token balance for a wallet and mint' },
     { path: '/hist', description: 'Live Solana paginated signatures for an address with a before cursor' },
+    { path: '/stk', description: 'Live Solana parsed stake account delegation and authorities' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3143,6 +3187,7 @@ const server = createServer(async (req, res) => {
               { name: 'parsed_transfers', description: 'Paid Solana parsed SOL and SPL transfers for a signature. 0.015 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
               { name: 'owner_mint_balance', description: 'Paid Solana SPL token balance for a wallet and mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' } }, required: ['owner', 'mint'] } },
               { name: 'signature_history', description: 'Paid Solana paginated signatures with a before cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, before: { type: 'string' } }, required: ['address'] } },
+              { name: 'stake_account', description: 'Paid Solana parsed stake account delegation. 0.01 USDC.', inputSchema: { type: 'object', properties: { stake: { type: 'string' } }, required: ['stake'] } },
             ],
           },
         })
@@ -3223,6 +3268,7 @@ const server = createServer(async (req, res) => {
         parsed_transfers: '/xfer',
         owner_mint_balance: '/own',
         signature_history: '/hist',
+        stake_account: '/stk',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
