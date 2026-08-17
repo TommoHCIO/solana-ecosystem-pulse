@@ -125,6 +125,7 @@ const ROUTE_PRICE = {
   '/vcur': { usdc: '10000', sol: '10000000' },
   '/nrpc': { usdc: '10000', sol: '10000000' },
   '/hwin': { usdc: '10000', sol: '10000000' },
+  '/gpmm': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -759,6 +760,15 @@ const BAZAAR = {
     count: 0,
     signatures: [],
   }),
+  '/gpmm': bazaarExtension({
+    program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+    space: '165',
+    offset: '0',
+    bytes: '11111111111111111111111111111111',
+  }, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -891,6 +901,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/vcur': 'Live Solana current vote accounts with activated stake',
         '/nrpc': 'Live Solana cluster nodes that expose a public RPC endpoint',
         '/hwin': 'Live Solana signatures between a before cursor and an until cursor',
+        '/gpmm': 'Live Solana program accounts filtered by dataSize and memcmp',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1112,7 +1123,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                               ? ['solana', 'cluster', 'rpc', 'nodes']
                                                                                                                                                                                                                               : path === '/hwin'
                                                                                                                                                                                                                                 ? ['solana', 'signatures', 'before', 'until']
-                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                : path === '/gpmm'
+                                                                                                                                                                                                                                  ? ['solana', 'program', 'datasize', 'memcmp']
+                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2754,6 +2767,35 @@ async function programAccountsSlice(programRaw, spaceRaw, offsetRaw, lengthRaw) 
     offset,
     length,
     encoding: 'base64',
+    count: rows.length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function programAccountsSizeMemcmp(programRaw, spaceRaw, offsetRaw, bytesRaw) {
+  const program = requirePubkey('program', programRaw)
+  const space = parseSpace(spaceRaw)
+  const offset = parseOffset(offsetRaw)
+  const bytes = parseMemcmpBytes(bytesRaw)
+  const res = await rpc('getProgramAccounts', [
+    program,
+    {
+      encoding: 'base64',
+      dataSlice: { offset: 0, length: 0 },
+      filters: [{ dataSize: space }, { memcmp: { offset, bytes } }],
+    },
+  ])
+  const rows = (Array.isArray(res.result) ? res.result : []).slice(0, 20).map((item) => ({
+    pubkey: item.pubkey,
+    lamports: item.account?.lamports ?? null,
+    owner: item.account?.owner ?? null,
+  }))
+  return {
+    program,
+    space,
+    offset,
+    bytes,
     count: rows.length,
     accounts: rows,
     generatedAt: new Date().toISOString(),
@@ -4694,6 +4736,20 @@ const PAID = {
       url.searchParams.get('until'),
     ),
   },
+  '/gpmm': {
+    validate(url) {
+      requirePubkey('program', url.searchParams.get('program'))
+      parseSpace(url.searchParams.get('space'))
+      parseOffset(url.searchParams.get('offset'))
+      parseMemcmpBytes(url.searchParams.get('bytes'))
+    },
+    run: async (url) => programAccountsSizeMemcmp(
+      url.searchParams.get('program'),
+      url.searchParams.get('space'),
+      url.searchParams.get('offset'),
+      url.searchParams.get('bytes'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -4812,6 +4868,7 @@ function catalogResources() {
     { path: '/vcur', description: 'Live Solana current vote accounts with activated stake' },
     { path: '/nrpc', description: 'Live Solana cluster nodes that expose a public RPC endpoint' },
     { path: '/hwin', description: 'Live Solana signatures between a before cursor and an until cursor' },
+    { path: '/gpmm', description: 'Live Solana program accounts filtered by dataSize and memcmp' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4990,6 +5047,7 @@ const server = createServer(async (req, res) => {
               { name: 'current_votes', description: 'Paid Solana current vote accounts with activated stake. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'cluster_rpc_nodes', description: 'Paid Solana cluster nodes that expose a public RPC endpoint. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'signature_history_window', description: 'Paid Solana signatures between a before cursor and an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, before: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'before', 'until'] } },
+              { name: 'program_accounts_size_memcmp', description: 'Paid Solana program accounts filtered by dataSize and memcmp. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' } }, required: ['program', 'space', 'offset', 'bytes'] } },
             ],
           },
         })
@@ -5108,6 +5166,7 @@ const server = createServer(async (req, res) => {
         current_votes: '/vcur',
         cluster_rpc_nodes: '/nrpc',
         signature_history_window: '/hwin',
+        program_accounts_size_memcmp: '/gpmm',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
