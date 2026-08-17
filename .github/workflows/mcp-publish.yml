@@ -17,7 +17,12 @@ jobs:
         with:
           go-version: '1.24'
       - name: Install and publish
+        env:
+          GOPATH: ${{ runner.temp }}/go
+          GOBIN: ${{ runner.temp }}/go/bin
         run: |
+          mkdir -p "$GOBIN"
           go install github.com/modelcontextprotocol/registry/cmd/publisher@latest
-          "$HOME/go/bin/mcp-publisher" login github-oidc
-          "$HOME/go/bin/mcp-publisher" publish
+          ls -la "$GOBIN"
+          "$GOBIN/publisher" login github-oidc
+          "$GOBIN/publisher" publish
