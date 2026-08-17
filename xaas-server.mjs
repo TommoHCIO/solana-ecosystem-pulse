@@ -124,6 +124,7 @@ const ROUTE_PRICE = {
   '/gpmd': { usdc: '15000', sol: '15000000' },
   '/vcur': { usdc: '10000', sol: '10000000' },
   '/nrpc': { usdc: '10000', sol: '10000000' },
+  '/hwin': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -750,6 +751,14 @@ const BAZAAR = {
     count: 0,
     nodes: [],
   }),
+  '/hwin': bazaarExtension({
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    before: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW',
+    until: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW',
+  }, {
+    count: 0,
+    signatures: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -881,6 +890,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/gpmd': 'Live Solana program accounts filtered by memcmp with a data slice',
         '/vcur': 'Live Solana current vote accounts with activated stake',
         '/nrpc': 'Live Solana cluster nodes that expose a public RPC endpoint',
+        '/hwin': 'Live Solana signatures between a before cursor and an until cursor',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1100,7 +1110,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                             ? ['solana', 'votes', 'current', 'stake']
                                                                                                                                                                                                                             : path === '/nrpc'
                                                                                                                                                                                                                               ? ['solana', 'cluster', 'rpc', 'nodes']
-                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                              : path === '/hwin'
+                                                                                                                                                                                                                                ? ['solana', 'signatures', 'before', 'until']
+                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3912,6 +3924,28 @@ async function signatureHistoryUntil(addressRaw, untilRaw) {
   }
 }
 
+async function signatureHistoryWindow(addressRaw, beforeRaw, untilRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const before = requireSig('before', beforeRaw)
+  const until = requireSig('until', untilRaw)
+  const res = await rpc('getSignaturesForAddress', [address, { limit: 20, before, until }])
+  const rows = (res.result || []).map((item) => ({
+    signature: item.signature,
+    slot: item.slot,
+    err: item.err || null,
+    iso: item.blockTime ? new Date(item.blockTime * 1000).toISOString() : null,
+  }))
+  return {
+    address,
+    before,
+    until,
+    count: rows.length,
+    next: rows.length ? rows[rows.length - 1].signature : null,
+    signatures: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function signaturesMinContextSlot(addressRaw, slotRaw) {
   const address = requirePubkey('address', addressRaw)
   const minContextSlot = parseSlot(slotRaw)
@@ -4648,6 +4682,18 @@ const PAID = {
     validate() {},
     run: async () => clusterRpcEndpoints(),
   },
+  '/hwin': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+      requireSig('before', url.searchParams.get('before'))
+      requireSig('until', url.searchParams.get('until'))
+    },
+    run: async (url) => signatureHistoryWindow(
+      url.searchParams.get('address'),
+      url.searchParams.get('before'),
+      url.searchParams.get('until'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -4765,6 +4811,7 @@ function catalogResources() {
     { path: '/gpmd', description: 'Live Solana program accounts filtered by memcmp with a data slice' },
     { path: '/vcur', description: 'Live Solana current vote accounts with activated stake' },
     { path: '/nrpc', description: 'Live Solana cluster nodes that expose a public RPC endpoint' },
+    { path: '/hwin', description: 'Live Solana signatures between a before cursor and an until cursor' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4942,6 +4989,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_accounts_memcmp_slice', description: 'Paid Solana program accounts filtered by memcmp with a data slice. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slice: { type: 'string' }, length: { type: 'string' } }, required: ['program', 'offset', 'bytes', 'slice', 'length'] } },
               { name: 'current_votes', description: 'Paid Solana current vote accounts with activated stake. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'cluster_rpc_nodes', description: 'Paid Solana cluster nodes that expose a public RPC endpoint. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'signature_history_window', description: 'Paid Solana signatures between a before cursor and an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, before: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'before', 'until'] } },
             ],
           },
         })
@@ -5059,6 +5107,7 @@ const server = createServer(async (req, res) => {
         program_accounts_memcmp_slice: '/gpmd',
         current_votes: '/vcur',
         cluster_rpc_nodes: '/nrpc',
+        signature_history_window: '/hwin',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
