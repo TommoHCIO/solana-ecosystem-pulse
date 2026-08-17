@@ -114,6 +114,7 @@ const ROUTE_PRICE = {
   '/blkt': { usdc: '10000', sol: '10000000' },
   '/vdel': { usdc: '10000', sol: '10000000' },
   '/bpr': { usdc: '10000', sol: '10000000' },
+  '/nver': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -694,6 +695,10 @@ const BAZAAR = {
     leaderSlots: 0,
     skipped: 0,
   }),
+  '/nver': bazaarExtension({}, {
+    count: 0,
+    versions: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -815,6 +820,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/blkt': 'Live Solana versioned block signatures for a slot',
         '/vdel': 'Live Solana delinquent vote accounts including unstaked',
         '/bpr': 'Live Solana block production skip rate for a slot range',
+        '/nver': 'Live Solana cluster node versions and feature sets',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1014,7 +1020,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                         ? ['solana', 'votes', 'delinquent', 'unstaked']
                                                                                                                                                                                                         : path === '/bpr'
                                                                                                                                                                                                           ? ['solana', 'blocks', 'production', 'range']
-                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                          : path === '/nver'
+                                                                                                                                                                                                            ? ['solana', 'cluster', 'version', 'featureset']
+                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2202,6 +2210,25 @@ async function clusterTpuEndpoints() {
   return {
     count: nodes.length,
     nodes,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function clusterNodeVersions() {
+  const res = await rpc('getClusterNodes', [])
+  const counts = new Map()
+  for (const row of res.result || []) {
+    const version = row.version || 'unknown'
+    const featureSet = row.featureSet ?? null
+    const key = version + '|' + String(featureSet)
+    const current = counts.get(key) || { version, featureSet, count: 0 }
+    current.count += 1
+    counts.set(key, current)
+  }
+  const versions = [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 16)
+  return {
+    count: (res.result || []).length,
+    versions,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -4245,6 +4272,10 @@ const PAID = {
     },
     run: async (url) => blockProductionRange(url.searchParams.get('first'), url.searchParams.get('last')),
   },
+  '/nver': {
+    validate() {},
+    run: async () => clusterNodeVersions(),
+  },
 }
 
 function catalogResources() {
@@ -4352,6 +4383,7 @@ function catalogResources() {
     { path: '/blkt', description: 'Live Solana versioned block signatures for a slot' },
     { path: '/vdel', description: 'Live Solana delinquent vote accounts including unstaked' },
     { path: '/bpr', description: 'Live Solana block production skip rate for a slot range' },
+    { path: '/nver', description: 'Live Solana cluster node versions and feature sets' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4519,6 +4551,7 @@ const server = createServer(async (req, res) => {
               { name: 'block_signatures', description: 'Paid Solana versioned block signatures for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'delinquent_votes', description: 'Paid Solana delinquent vote accounts including unstaked. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'block_production_range', description: 'Paid Solana block production skip rate for a slot range. 0.01 USDC.', inputSchema: { type: 'object', properties: { first: { type: 'string' }, last: { type: 'string' } }, required: ['first', 'last'] } },
+              { name: 'cluster_node_versions', description: 'Paid Solana cluster node versions and feature sets. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -4626,6 +4659,7 @@ const server = createServer(async (req, res) => {
         block_signatures: '/blkt',
         delinquent_votes: '/vdel',
         block_production_range: '/bpr',
+        cluster_node_versions: '/nver',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
