@@ -67,6 +67,7 @@ const ROUTE_PRICE = {
   '/sched': { usdc: '5000', sol: '5000000' },
   '/reward': { usdc: '10000', sol: '10000000' },
   '/btime': { usdc: '5000', sol: '5000000' },
+  '/batch': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -420,6 +421,11 @@ const BAZAAR = {
     unix: 1755430000,
     iso: '2026-08-17T12:00:00.000Z',
   }),
+  '/batch': bazaarExtension({ addresses: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    count: 1,
+    found: 1,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -494,6 +500,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/sched': 'Live Solana current-epoch leader schedule summary',
         '/reward': 'Live Solana inflation reward for a stake or vote address',
         '/btime': 'Live Solana estimated production time for a slot',
+        '/batch': 'Live Solana getMultipleAccounts batch lookup',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -599,7 +606,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                           ? ['solana', 'inflation', 'reward', 'stake']
                                                                                                           : path === '/btime'
                                                                                                             ? ['solana', 'block', 'time', 'unix']
-                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                            : path === '/batch'
+                                                                                                              ? ['solana', 'accounts', 'batch', 'lookup']
+                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -610,6 +619,50 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
 
 function encodeHeader(obj) {
   return Buffer.from(JSON.stringify(obj)).toString('base64')
+}
+
+function parseAddresses(raw) {
+  const items = String(raw || '').split(',').map((part) => part.trim()).filter(Boolean)
+  if (items.length === 0) {
+    const err = new Error('addresses query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  if (items.length > 20) {
+    const err = new Error('addresses accepts at most 20 pubkeys')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  for (const item of items) {
+    if (!isPubkey(item)) {
+      const err = new Error('addresses must be comma-separated base58 public keys')
+      err.status = 400
+      err.code = 'invalid_param'
+      throw err
+    }
+  }
+  return items
+}
+
+async function multipleAccounts(raw) {
+  const addresses = parseAddresses(raw)
+  const res = await rpc('getMultipleAccounts', [addresses, { encoding: 'jsonParsed', commitment: 'confirmed' }])
+  const rows = (res.result?.value || []).map((item, index) => ({
+    address: addresses[index],
+    found: Boolean(item),
+    lamports: item?.lamports ?? null,
+    owner: item?.owner ?? null,
+    executable: item?.executable ?? null,
+    space: item?.space ?? null,
+  }))
+  return {
+    count: rows.length,
+    found: rows.filter((row) => row.found).length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 function isPubkey(value) {
@@ -2082,6 +2135,10 @@ const PAID = {
     validate(url) { parseSlot(url.searchParams.get('slot')) },
     run: async (url) => blockTime(url.searchParams.get('slot')),
   },
+  '/batch': {
+    validate(url) { parseAddresses(url.searchParams.get('addresses')) },
+    run: async (url) => multipleAccounts(url.searchParams.get('addresses')),
+  },
 }
 
 function catalogResources() {
@@ -2142,6 +2199,7 @@ function catalogResources() {
     { path: '/sched', description: 'Live Solana current-epoch leader schedule summary' },
     { path: '/reward', description: 'Live Solana inflation reward for a stake or vote address' },
     { path: '/btime', description: 'Live Solana estimated production time for a slot' },
+    { path: '/batch', description: 'Live Solana getMultipleAccounts batch lookup' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2259,6 +2317,7 @@ const server = createServer(async (req, res) => {
               { name: 'leader_schedule', description: 'Paid Solana current-epoch leader schedule summary. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'inflation_reward', description: 'Paid Solana inflation reward for a stake or vote address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'block_time', description: 'Paid Solana getBlockTime for a slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'multiple_accounts', description: 'Paid Solana getMultipleAccounts batch lookup. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' } }, required: ['addresses'] } },
             ],
           },
         })
@@ -2319,6 +2378,7 @@ const server = createServer(async (req, res) => {
         leader_schedule: '/sched',
         inflation_reward: '/reward',
         block_time: '/btime',
+        multiple_accounts: '/batch',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
