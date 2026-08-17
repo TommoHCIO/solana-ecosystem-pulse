@@ -35,6 +35,7 @@ const ROUTE_PRICE = {
   '/semver': { usdc: '3000', sol: '3000000' },
   '/mime': { usdc: '3000', sol: '3000000' },
   '/lang': { usdc: '3000', sol: '3000000' },
+  '/slug': { usdc: '2000', sol: '2000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -249,6 +250,10 @@ const BAZAAR = {
     name: 'Italian',
     iso6391: 'it',
   }),
+  '/slug': bazaarExtension({ text: 'Solana Pulse XaaS' }, {
+    text: 'Solana Pulse XaaS',
+    slug: 'solana-pulse-xaas',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -291,6 +296,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/semver': 'Compare two SemVer versions',
         '/mime': 'Look up MIME type from a file extension',
         '/lang': 'Look up ISO 639 language code name',
+        '/slug': 'Turn text into a URL slug',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -332,7 +338,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                           ? ['mime', 'extension', 'file', 'type']
                                           : path === '/lang'
                                             ? ['language', 'iso639', 'locale', 'i18n']
-                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                            : path === '/slug'
+                                              ? ['slug', 'url', 'seo', 'text']
+                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -717,6 +725,30 @@ const LANG_BY_CODE = {
   fi: { name: 'Finnish', native: 'Suomi' },
   no: { name: 'Norwegian', native: 'Norsk' },
   el: { name: 'Greek', native: 'Ελληνικά' },
+}
+
+function makeSlug(raw) {
+  const text = requireText('text', raw)
+  if (text.length > 200) {
+    const err = new Error('text must be 200 characters or fewer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const slug = text
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+  if (!slug) {
+    const err = new Error('text must contain letters or digits')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return { text, slug, generatedAt: new Date().toISOString() }
 }
 
 function lookupLang(raw) {
@@ -1255,6 +1287,10 @@ const PAID = {
     validate(url) { lookupLang(url.searchParams.get('code')) },
     run: async (url) => lookupLang(url.searchParams.get('code')),
   },
+  '/slug': {
+    validate(url) { makeSlug(url.searchParams.get('text')) },
+    run: async (url) => makeSlug(url.searchParams.get('text')),
+  },
 }
 
 function catalogResources() {
@@ -1283,6 +1319,7 @@ function catalogResources() {
     { path: '/semver', description: 'Compare two SemVer versions. Query: a, b' },
     { path: '/mime', description: 'Look up MIME type from a file extension. Query: ext' },
     { path: '/lang', description: 'Look up ISO 639-1 language code. Query: code' },
+    { path: '/slug', description: 'Turn text into a URL slug. Query: text' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1368,6 +1405,7 @@ const server = createServer(async (req, res) => {
               { name: 'semver_compare', description: 'Paid SemVer compare. 0.003 USDC.', inputSchema: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['a', 'b'] } },
               { name: 'mime_lookup', description: 'Paid MIME type from file extension. 0.003 USDC.', inputSchema: { type: 'object', properties: { ext: { type: 'string' } }, required: ['ext'] } },
               { name: 'lang_lookup', description: 'Paid ISO 639-1 language lookup. 0.003 USDC.', inputSchema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } },
+              { name: 'slugify', description: 'Paid URL slug from text. 0.002 USDC.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
             ],
           },
         })
@@ -1396,6 +1434,7 @@ const server = createServer(async (req, res) => {
         semver_compare: '/semver',
         mime_lookup: '/mime',
         lang_lookup: '/lang',
+        slugify: '/slug',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
