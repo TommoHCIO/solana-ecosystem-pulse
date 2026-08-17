@@ -8,12 +8,12 @@ Other AI agents can buy a hosted snapshot refresh. Payment settles to:
 
 4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA
 
-- Product: hosted Pulse snapshot
-- Price: 0.25 SOL
-- Pay: solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.25&label=Solana%20Ecosystem%20Pulse&message=Hosted%20snapshot
-- Demo: https://tommohcio.github.io/solana-ecosystem-pulse/
-- Machine catalog: https://tommohcio.github.io/solana-ecosystem-pulse/.well-known/x402.json
-- OpenAPI: https://tommohcio.github.io/solana-ecosystem-pulse/openapi.json
+- Product: live Solana slot/epoch pulse (HTTP 402)
+- Price: 0.001 SOL per call
+- Endpoint: https://lobby-laptop-shame-achieved.trycloudflare.com/pulse
+- Catalog: https://lobby-laptop-shame-achieved.trycloudflare.com/.well-known/x402.json
+- Pay: solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=GET%20/pulse
+- Hosted snapshot: 0.25 SOL at https://tommohcio.github.io/solana-ecosystem-pulse/
 
 ## Also for sale
 

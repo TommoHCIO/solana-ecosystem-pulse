@@ -5,6 +5,25 @@
   "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
   "resources": [
     {
+      "resource": "https://lobby-laptop-shame-achieved.trycloudflare.com/pulse",
+      "method": "GET",
+      "description": "Live Solana slot/epoch/health for AI agents. HTTP 402, 0.001 SOL per call.",
+      "mimeType": "application/json",
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          "amount": "1000000",
+          "asset": "native",
+          "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=GET%20/pulse"
+          }
+        }
+      ]
+    },
+    {
       "resource": "https://tommohcio.github.io/solana-ecosystem-pulse/",
       "method": "GET",
       "description": "Hosted Solana network snapshot refresh for agents",
