@@ -179,6 +179,7 @@ const ROUTE_PRICE = {
   '/peg': { usdc: '10000', sol: '10000000' },
   '/meta': { usdc: '5000', sol: '5000000' },
   '/pfee': { usdc: '5000', sol: '5000000' },
+  '/stime': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1225,6 +1226,13 @@ const BAZAAR = {
     recommendedMicroLamports: null,
     levels: { low: null, medium: null, high: null, veryHigh: null },
   }),
+  '/stime': bazaarExtension({
+    slot: '439943803',
+  }, {
+    slot: 439943803,
+    unixTime: null,
+    iso: null,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1411,6 +1419,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/peg': 'Live Solana stablecoin peg deviation and depeg verdict for a required mint',
         '/meta': 'Live Solana token identity (name, symbol, icon, decimals, supply) for a required mint',
         '/pfee': 'Live Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh)',
+        '/stime': 'Convert a required Solana slot to its block unix time and ISO timestamp',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1740,7 +1749,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                                           ? ['solana', 'token', 'metadata', 'identity']
                                                                                                                                                                                                                                                                                                                                           : path === '/pfee'
                                                                                                                                                                                                                                                                                                                                             ? ['solana', 'priority-fee', 'gas', 'compute']
-                                                                                                                                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                                            : path === '/stime'
+                                                                                                                                                                                                                                                                                                                                              ? ['solana', 'slot', 'time', 'timestamp']
+                                                                                                                                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     quote: 'Pay ' + (Number(price.usdc) / 1e6) + ' USDC or ' + (Number(price.sol) / 1e9)
@@ -3002,6 +3013,43 @@ async function jupiterPerpTrades(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     trades: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function slotToTime(slotRaw) {
+  const slotStr = requireText('slot', slotRaw)
+  if (!/^[0-9]{1,15}$/.test(slotStr)) {
+    const err = new Error('slot must be a non-negative integer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const slot = Number(slotStr)
+  const res = await fetch('https://api.mainnet-beta.solana.com', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBlockTime', params: [slot] }),
+    signal: AbortSignal.timeout(15000),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (body && body.error) {
+    const err = new Error(body.error.message || 'slot has no block time')
+    err.status = body.error.code === -32004 || /not available|skipped|missing/i.test(String(body.error.message)) ? 404 : 502
+    err.code = err.status === 404 ? 'not_found' : 'upstream_error'
+    throw err
+  }
+  const unix = typeof body.result === 'number' ? body.result : null
+  if (unix === null) {
+    const err = new Error('no block time for slot')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  return {
+    slot,
+    unixTime: unix,
+    iso: new Date(unix * 1000).toISOString(),
     generatedAt: new Date().toISOString(),
   }
 }
@@ -7309,6 +7357,18 @@ const PAID = {
     validate() {},
     run: async () => priorityFeeRecommendation(),
   },
+  '/stime': {
+    validate(url) {
+      const slot = requireText('slot', url.searchParams.get('slot'))
+      if (!/^[0-9]{1,15}$/.test(slot)) {
+        const err = new Error('slot must be a non-negative integer')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => slotToTime(url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -7481,6 +7541,7 @@ function catalogResources() {
     { path: '/peg', description: 'Live Solana stablecoin peg deviation and depeg verdict for a required mint' },
     { path: '/meta', description: 'Live Solana token identity (name, symbol, icon, decimals, supply) for a required mint' },
     { path: '/pfee', description: 'Live Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh)' },
+    { path: '/stime', description: 'Convert a required Solana slot to its block unix time and ISO timestamp' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7713,6 +7774,7 @@ const server = createServer(async (req, res) => {
               { name: 'stablecoin_peg', description: 'Paid Solana stablecoin peg deviation (bps from $1) and depeg verdict for a required mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'token_meta', description: 'Paid Solana token identity (name, symbol, icon, decimals, supply, verification) for a required mint. 0.005 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'priority_fee', description: 'Paid Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh microLamports per compute unit). 0.005 USDC.', inputSchema: { type: 'object', properties: {}, required: [] } },
+              { name: 'slot_time', description: 'Paid conversion of a required Solana slot to its block unix time and ISO timestamp. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
             ],
           },
         })
@@ -7885,6 +7947,7 @@ const server = createServer(async (req, res) => {
         stablecoin_peg: '/peg',
         token_meta: '/meta',
         priority_fee: '/pfee',
+        slot_time: '/stime',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
