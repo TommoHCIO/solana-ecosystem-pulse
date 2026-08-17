@@ -101,6 +101,7 @@ const ROUTE_PRICE = {
   '/until': { usdc: '10000', sol: '10000000' },
   '/t22': { usdc: '10000', sol: '10000000' },
   '/circw': { usdc: '15000', sol: '15000000' },
+  '/ldad': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -629,6 +630,10 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/ldad': bazaarExtension({ sig: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW' }, {
+    writable: [],
+    readonly: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -737,6 +742,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/until': 'Live Solana paginated signatures with an until cursor',
         '/t22': 'Live Solana Token-2022 accounts for a wallet',
         '/circw': 'Live Solana circulating largest native SOL accounts',
+        '/ldad': 'Live Solana versioned transaction loaded addresses',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -910,7 +916,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                               ? ['solana', 'token2022', 'owner', 'accounts']
                                                                                                                                                                               : path === '/circw'
                                                                                                                                                                                 ? ['solana', 'whales', 'circulating', 'sol']
-                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                : path === '/ldad'
+                                                                                                                                                                                  ? ['solana', 'transaction', 'alt', 'loaded']
+                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1371,6 +1379,30 @@ async function solTx(sig) {
     throw err
   }
   return { sig, found: true, tx: tx.result, generatedAt: new Date().toISOString() }
+}
+
+async function loadedAddresses(sigRaw) {
+  const sig = requireSig('sig', sigRaw)
+  const tx = await rpc('getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }])
+  if (!tx.result) {
+    const err = new Error('transaction not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const loaded = tx.result.meta?.loadedAddresses || {}
+  const writable = Array.isArray(loaded.writable) ? loaded.writable.slice(0, 16) : []
+  const readonly = Array.isArray(loaded.readonly) ? loaded.readonly.slice(0, 16) : []
+  return {
+    sig,
+    slot: tx.result.slot ?? null,
+    version: tx.result.version ?? 'legacy',
+    writableCount: Array.isArray(loaded.writable) ? loaded.writable.length : 0,
+    readonlyCount: Array.isArray(loaded.readonly) ? loaded.readonly.length : 0,
+    writable,
+    readonly,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 async function parsedTransfers(sigRaw) {
@@ -3643,6 +3675,10 @@ const PAID = {
     validate() {},
     run: async () => circulatingLargestAccounts(),
   },
+  '/ldad': {
+    validate(url) { requireSig('sig', url.searchParams.get('sig')) },
+    run: async (url) => loadedAddresses(url.searchParams.get('sig')),
+  },
 }
 
 function catalogResources() {
@@ -3737,6 +3773,7 @@ function catalogResources() {
     { path: '/until', description: 'Live Solana paginated signatures with an until cursor' },
     { path: '/t22', description: 'Live Solana Token-2022 accounts for a wallet' },
     { path: '/circw', description: 'Live Solana circulating largest native SOL accounts' },
+    { path: '/ldad', description: 'Live Solana versioned transaction loaded addresses' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3888,6 +3925,7 @@ const server = createServer(async (req, res) => {
               { name: 'signature_history_until', description: 'Paid Solana paginated signatures with an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'until'] } },
               { name: 'token2022_accounts', description: 'Paid Solana Token-2022 accounts for a wallet. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' } }, required: ['owner'] } },
               { name: 'circulating_whales', description: 'Paid Solana circulating largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'loaded_addresses', description: 'Paid Solana versioned transaction loaded addresses. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
             ],
           },
         })
@@ -3982,6 +4020,7 @@ const server = createServer(async (req, res) => {
         signature_history_until: '/until',
         token2022_accounts: '/t22',
         circulating_whales: '/circw',
+        loaded_addresses: '/ldad',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
