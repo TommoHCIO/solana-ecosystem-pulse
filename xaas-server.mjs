@@ -52,6 +52,7 @@ const ROUTE_PRICE = {
   '/ok': { usdc: '5000', sol: '5000000' },
   '/gen': { usdc: '5000', sol: '5000000' },
   '/epoch': { usdc: '5000', sol: '5000000' },
+  '/slot': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -342,6 +343,9 @@ const BAZAAR = {
     firstNormalEpoch: 0,
     firstNormalSlot: 0,
   }),
+  '/slot': bazaarExtension({}, {
+    slot: 439000000,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -401,6 +405,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/ok': 'Live Solana RPC getHealth status',
         '/gen': 'Live Solana cluster genesis hash',
         '/epoch': 'Live Solana epoch schedule parameters',
+        '/slot': 'Live Solana current slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -476,7 +481,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                             ? ['solana', 'genesis', 'hash', 'cluster']
                                                                             : path === '/epoch'
                                                                               ? ['solana', 'epoch', 'schedule', 'slots']
-                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                              : path === '/slot'
+                                                                                ? ['solana', 'slot', 'height', 'cluster']
+                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -864,6 +871,14 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function currentSlot() {
+  const res = await rpc('getSlot', [])
+  return {
+    slot: res.result,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function epochSchedule() {
   const res = await rpc('getEpochSchedule', [])
@@ -1724,6 +1739,10 @@ const PAID = {
     validate() {},
     run: async () => epochSchedule(),
   },
+  '/slot': {
+    validate() {},
+    run: async () => currentSlot(),
+  },
 }
 
 function catalogResources() {
@@ -1769,6 +1788,7 @@ function catalogResources() {
     { path: '/ok', description: 'Live Solana RPC getHealth status' },
     { path: '/gen', description: 'Live Solana cluster genesis hash' },
     { path: '/epoch', description: 'Live Solana epoch schedule parameters' },
+    { path: '/slot', description: 'Live Solana current slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1871,6 +1891,7 @@ const server = createServer(async (req, res) => {
               { name: 'rpc_health', description: 'Paid Solana RPC getHealth status. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'genesis_hash', description: 'Paid Solana cluster genesis hash. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'epoch_schedule', description: 'Paid Solana epoch schedule. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'current_slot', description: 'Paid Solana current slot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1916,6 +1937,7 @@ const server = createServer(async (req, res) => {
         rpc_health: '/ok',
         genesis_hash: '/gen',
         epoch_schedule: '/epoch',
+        current_slot: '/slot',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
