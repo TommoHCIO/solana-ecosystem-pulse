@@ -119,6 +119,7 @@ const ROUTE_PRICE = {
   '/lsep': { usdc: '10000', sol: '10000000' },
   '/bpir': { usdc: '10000', sol: '10000000' },
   '/rewm': { usdc: '10000', sol: '10000000' },
+  '/nshd': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -719,6 +720,10 @@ const BAZAAR = {
     count: 0,
     found: 0,
   }),
+  '/nshd': bazaarExtension({}, {
+    count: 0,
+    shreds: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -845,6 +850,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/lsep': 'Live Solana leader-schedule summary for the epoch of a slot',
         '/bpir': 'Live Solana block production for one validator in a slot range',
         '/rewm': 'Live Solana inflation rewards for multiple stake or vote addresses',
+        '/nshd': 'Live Solana cluster shred-version histogram',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1054,7 +1060,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                   ? ['solana', 'blocks', 'identity', 'range']
                                                                                                                                                                                                                   : path === '/rewm'
                                                                                                                                                                                                                     ? ['solana', 'inflation', 'rewards', 'batch']
-                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                    : path === '/nshd'
+                                                                                                                                                                                                                      ? ['solana', 'cluster', 'shred', 'version']
+                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2281,6 +2289,24 @@ async function clusterNodeVersions() {
   return {
     count: (res.result || []).length,
     versions,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function clusterShredVersions() {
+  const res = await rpc('getClusterNodes', [])
+  const counts = new Map()
+  for (const row of res.result || []) {
+    const shredVersion = row.shredVersion ?? null
+    const key = String(shredVersion)
+    const current = counts.get(key) || { shredVersion, count: 0 }
+    current.count += 1
+    counts.set(key, current)
+  }
+  const shreds = [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 16)
+  return {
+    count: (res.result || []).length,
+    shreds,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -4431,6 +4457,10 @@ const PAID = {
     validate(url) { parseAddresses(url.searchParams.get('addresses')) },
     run: async (url) => inflationRewardsMany(url.searchParams.get('addresses')),
   },
+  '/nshd': {
+    validate() {},
+    run: async () => clusterShredVersions(),
+  },
 }
 
 function catalogResources() {
@@ -4543,6 +4573,7 @@ function catalogResources() {
     { path: '/lsep', description: 'Live Solana leader-schedule summary for the epoch of a slot' },
     { path: '/bpir', description: 'Live Solana block production for one validator in a slot range' },
     { path: '/rewm', description: 'Live Solana inflation rewards for multiple stake or vote addresses' },
+    { path: '/nshd', description: 'Live Solana cluster shred-version histogram' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4715,6 +4746,7 @@ const server = createServer(async (req, res) => {
               { name: 'leader_schedule_epoch', description: 'Paid Solana leader-schedule summary for the epoch of a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'block_production_identity_range', description: 'Paid Solana block production for one validator in a slot range. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' }, first: { type: 'string' }, last: { type: 'string' } }, required: ['identity', 'first', 'last'] } },
               { name: 'inflation_rewards_many', description: 'Paid Solana inflation rewards for multiple stake or vote addresses. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' } }, required: ['addresses'] } },
+              { name: 'cluster_shred_versions', description: 'Paid Solana cluster shred-version histogram. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -4827,6 +4859,7 @@ const server = createServer(async (req, res) => {
         leader_schedule_epoch: '/lsep',
         block_production_identity_range: '/bpir',
         inflation_rewards_many: '/rewm',
+        cluster_shred_versions: '/nshd',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
