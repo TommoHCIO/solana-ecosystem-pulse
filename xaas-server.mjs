@@ -111,6 +111,7 @@ const ROUTE_PRICE = {
   '/aslc': { usdc: '10000', sol: '10000000' },
   '/mslc': { usdc: '10000', sol: '10000000' },
   '/gpsl': { usdc: '15000', sol: '15000000' },
+  '/blkt': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -679,6 +680,10 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/blkt': bazaarExtension({ slot: '439000000' }, {
+    count: 0,
+    signatures: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -797,6 +802,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/aslc': 'Live Solana account data slice by offset and length',
         '/mslc': 'Live Solana multi-account data slices by offset and length',
         '/gpsl': 'Live Solana program accounts with a sized data slice',
+        '/blkt': 'Live Solana versioned block signatures for a slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -990,7 +996,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                   ? ['solana', 'accounts', 'dataslice', 'batch']
                                                                                                                                                                                                   : path === '/gpsl'
                                                                                                                                                                                                     ? ['solana', 'program', 'dataslice', 'gpa']
-                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                    : path === '/blkt'
+                                                                                                                                                                                                      ? ['solana', 'block', 'signatures', 'versioned']
+                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2638,6 +2646,34 @@ async function blockMeta(slotRaw) {
   }
 }
 
+async function blockSignatures(slotRaw) {
+  const slot = parseSlot(slotRaw)
+  const res = await rpc('getBlock', [slot, {
+    encoding: 'json',
+    transactionDetails: 'signatures',
+    rewards: false,
+    maxSupportedTransactionVersion: 0,
+  }])
+  const value = res.result
+  if (!value) {
+    const err = new Error('block not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const signatures = Array.isArray(value.signatures) ? value.signatures.slice(0, 32) : []
+  return {
+    slot,
+    blockhash: value.blockhash ?? null,
+    parentSlot: value.parentSlot ?? null,
+    blockHeight: value.blockHeight ?? null,
+    blockTime: value.blockTime ?? null,
+    count: signatures.length,
+    signatures,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function blockRewards(slotRaw) {
   const slot = parseSlot(slotRaw)
   const res = await rpc('getBlock', [slot, {
@@ -4097,6 +4133,10 @@ const PAID = {
     },
     run: async (url) => programAccountsSlice(url.searchParams.get('program'), url.searchParams.get('space'), url.searchParams.get('offset'), url.searchParams.get('length')),
   },
+  '/blkt': {
+    validate(url) { parseSlot(url.searchParams.get('slot')) },
+    run: async (url) => blockSignatures(url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -4201,6 +4241,7 @@ function catalogResources() {
     { path: '/aslc', description: 'Live Solana account data slice by offset and length' },
     { path: '/mslc', description: 'Live Solana multi-account data slices by offset and length' },
     { path: '/gpsl', description: 'Live Solana program accounts with a sized data slice' },
+    { path: '/blkt', description: 'Live Solana versioned block signatures for a slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4365,6 +4406,7 @@ const server = createServer(async (req, res) => {
               { name: 'account_data_slice', description: 'Paid Solana account data slice by offset and length. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['address', 'offset', 'length'] } },
               { name: 'multiple_account_slices', description: 'Paid Solana multi-account data slices by offset and length. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['addresses', 'offset', 'length'] } },
               { name: 'program_account_slices', description: 'Paid Solana program accounts with a sized data slice. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['program', 'space', 'offset', 'length'] } },
+              { name: 'block_signatures', description: 'Paid Solana versioned block signatures for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
             ],
           },
         })
@@ -4469,6 +4511,7 @@ const server = createServer(async (req, res) => {
         account_data_slice: '/aslc',
         multiple_account_slices: '/mslc',
         program_account_slices: '/gpsl',
+        block_signatures: '/blkt',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
