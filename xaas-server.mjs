@@ -116,6 +116,7 @@ const ROUTE_PRICE = {
   '/bpr': { usdc: '10000', sol: '10000000' },
   '/nver': { usdc: '10000', sol: '10000000' },
   '/scmt': { usdc: '10000', sol: '10000000' },
+  '/lsep': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -704,6 +705,10 @@ const BAZAAR = {
     slot: 0,
     totalStake: 0,
   }),
+  '/lsep': bazaarExtension({ slot: '439000000' }, {
+    leaders: 0,
+    slotsAssigned: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -827,6 +832,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/bpr': 'Live Solana block production skip rate for a slot range',
         '/nver': 'Live Solana cluster node versions and feature sets',
         '/scmt': 'Live Solana current-slot vote commitment lockouts',
+        '/lsep': 'Live Solana leader-schedule summary for the epoch of a slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1030,7 +1036,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                             ? ['solana', 'cluster', 'version', 'featureset']
                                                                                                                                                                                                             : path === '/scmt'
                                                                                                                                                                                                               ? ['solana', 'slot', 'commitment', 'lockouts']
-                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                              : path === '/lsep'
+                                                                                                                                                                                                                ? ['solana', 'leader', 'schedule', 'epoch']
+                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2095,6 +2103,26 @@ async function leaderScheduleByIdentity(identityRaw) {
     slots: slots.length,
     firstSlots: slots.slice(0, 16),
     lastSlot: slots.length ? slots[slots.length - 1] : null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function leaderScheduleForSlot(slotRaw) {
+  const slot = parseSlot(slotRaw)
+  const res = await rpc('getLeaderSchedule', [slot])
+  const map = res.result && typeof res.result === 'object' ? res.result : {}
+  const rows = Object.entries(map).map(([identity, slots]) => ({
+    identity,
+    slots: Array.isArray(slots) ? slots.length : 0,
+  }))
+  rows.sort((a, b) => b.slots - a.slots)
+  const slotsAssigned = rows.reduce((sum, row) => sum + row.slots, 0)
+  return {
+    slot,
+    leaders: rows.length,
+    slotsAssigned,
+    topSlots: rows[0]?.slots ?? 0,
+    top: rows.slice(0, 8),
     generatedAt: new Date().toISOString(),
   }
 }
@@ -4306,6 +4334,10 @@ const PAID = {
     },
     run: async (url) => slotCommitment(url.searchParams.get('slot')),
   },
+  '/lsep': {
+    validate(url) { parseSlot(url.searchParams.get('slot')) },
+    run: async (url) => leaderScheduleForSlot(url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -4415,6 +4447,7 @@ function catalogResources() {
     { path: '/bpr', description: 'Live Solana block production skip rate for a slot range' },
     { path: '/nver', description: 'Live Solana cluster node versions and feature sets' },
     { path: '/scmt', description: 'Live Solana current-slot vote commitment lockouts' },
+    { path: '/lsep', description: 'Live Solana leader-schedule summary for the epoch of a slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4584,6 +4617,7 @@ const server = createServer(async (req, res) => {
               { name: 'block_production_range', description: 'Paid Solana block production skip rate for a slot range. 0.01 USDC.', inputSchema: { type: 'object', properties: { first: { type: 'string' }, last: { type: 'string' } }, required: ['first', 'last'] } },
               { name: 'cluster_node_versions', description: 'Paid Solana cluster node versions and feature sets. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'slot_commitment', description: 'Paid Solana current-slot vote commitment lockouts. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } } } },
+              { name: 'leader_schedule_epoch', description: 'Paid Solana leader-schedule summary for the epoch of a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
             ],
           },
         })
@@ -4693,6 +4727,7 @@ const server = createServer(async (req, res) => {
         block_production_range: '/bpr',
         cluster_node_versions: '/nver',
         slot_commitment: '/scmt',
+        leader_schedule_epoch: '/lsep',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
