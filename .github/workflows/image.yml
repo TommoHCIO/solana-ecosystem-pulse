@@ -33,3 +33,11 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/${{ steps.owner.outputs.lc }}/solana-ecosystem-pulse:latest
+      - name: Make package public
+        continue-on-error: true
+        run: |
+          curl -sS -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/user/packages/container/solana-ecosystem-pulse/visibility \
+            -d '{"visibility":"public"}' -w " HTTP:%{http_code}\n" || true
