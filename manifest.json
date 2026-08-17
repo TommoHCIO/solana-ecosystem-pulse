@@ -1,0 +1,41 @@
+{
+  "manifestVersion": 1,
+  "kind": "paid-mcp-agent",
+  "name": "Solana Pulse XaaS",
+  "description": "Paid Solana RPC and agent tools. Free sample. x402 on Solana USDC. New /rewe inflation reward for a chosen epoch.",
+  "version": "0.26.3",
+  "protocol": "x402",
+  "payment": {
+    "protocol": "x402",
+    "network": "solana",
+    "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA"
+  },
+  "agent": {
+    "name": "Solana Pulse XaaS",
+    "slug": "solana-pulse-xaas",
+    "description": "Paid Solana RPC and agent tools. Free sample. x402 on Solana USDC.",
+    "mcp": "https://meant-aye-allan-exit.trycloudflare.com/mcp",
+    "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+    "network": "solana"
+  },
+  "endpoints": {
+    "mcp": "/mcp",
+    "sample": "/sample",
+    "catalog": "/.well-known/x402.json"
+  },
+  "mcp": "https://meant-aye-allan-exit.trycloudflare.com/mcp",
+  "catalog": "https://meant-aye-allan-exit.trycloudflare.com/.well-known/x402.json",
+  "sample": "https://meant-aye-allan-exit.trycloudflare.com/sample",
+  "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+  "network": "solana",
+  "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "routes": [
+    "/sample",
+    "/rewe",
+    "/bpid",
+    "/ncw",
+    "/tpu",
+    "/ldad"
+  ]
+}

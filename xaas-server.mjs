@@ -105,6 +105,7 @@ const ROUTE_PRICE = {
   '/tpu': { usdc: '10000', sol: '10000000' },
   '/ncw': { usdc: '15000', sol: '15000000' },
   '/bpid': { usdc: '10000', sol: '10000000' },
+  '/rewe': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -649,6 +650,10 @@ const BAZAAR = {
     leaderSlots: 0,
     blocksProduced: 0,
   }),
+  '/rewe': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA', epoch: '800' }, {
+    found: false,
+    amount: null,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -761,6 +766,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/tpu': 'Live Solana cluster TPU gossip and RPC endpoints',
         '/ncw': 'Live Solana non-circulating largest native SOL accounts',
         '/bpid': 'Live Solana block production for one validator identity',
+        '/rewe': 'Live Solana inflation reward for a chosen epoch',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -942,7 +948,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                       ? ['solana', 'whales', 'noncirculating', 'sol']
                                                                                                                                                                                       : path === '/bpid'
                                                                                                                                                                                         ? ['solana', 'validator', 'production', 'identity']
-                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                        : path === '/rewe'
+                                                                                                                                                                                          ? ['solana', 'reward', 'inflation', 'epoch']
+                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2580,6 +2588,36 @@ async function inflationReward(address) {
   }
 }
 
+async function inflationRewardEpoch(addressRaw, epochRaw) {
+  const key = requirePubkey('address', addressRaw)
+  if (epochRaw === null || epochRaw === '') {
+    const err = new Error('epoch query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const epoch = Number(epochRaw)
+  if (!Number.isInteger(epoch) || epoch < 0) {
+    const err = new Error('epoch must be a non-negative integer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const res = await rpc('getInflationReward', [[key], { epoch }])
+  const row = Array.isArray(res.result) ? res.result[0] : null
+  return {
+    address: key,
+    requestedEpoch: epoch,
+    found: Boolean(row),
+    epoch: row?.epoch ?? null,
+    effectiveSlot: row?.effectiveSlot ?? null,
+    amount: row?.amount ?? null,
+    postBalance: row?.postBalance ?? null,
+    commission: row?.commission ?? null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function inflationGovernor() {
   const res = await rpc('getInflationGovernor', [])
   const value = res.result || {}
@@ -3773,6 +3811,25 @@ const PAID = {
     validate(url) { requirePubkey('identity', url.searchParams.get('identity')) },
     run: async (url) => blockProductionByIdentity(url.searchParams.get('identity')),
   },
+  '/rewe': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+      if (url.searchParams.get('epoch') === null || url.searchParams.get('epoch') === '') {
+        const err = new Error('epoch query param is required')
+        err.status = 400
+        err.code = 'missing_param'
+        throw err
+      }
+      const epoch = Number(url.searchParams.get('epoch'))
+      if (!Number.isInteger(epoch) || epoch < 0) {
+        const err = new Error('epoch must be a non-negative integer')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => inflationRewardEpoch(url.searchParams.get('address'), url.searchParams.get('epoch')),
+  },
 }
 
 function catalogResources() {
@@ -3871,6 +3928,7 @@ function catalogResources() {
     { path: '/tpu', description: 'Live Solana cluster TPU gossip and RPC endpoints' },
     { path: '/ncw', description: 'Live Solana non-circulating largest native SOL accounts' },
     { path: '/bpid', description: 'Live Solana block production for one validator identity' },
+    { path: '/rewe', description: 'Live Solana inflation reward for a chosen epoch' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3911,6 +3969,9 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === '/llms.txt') {
       return sendFile(res, join(ROOT, 'llms.txt'), 'text/plain; charset=utf-8')
+    }
+    if (url.pathname === '/manifest.json') {
+      return sendFile(res, join(ROOT, 'manifest.json'), 'application/json; charset=utf-8')
     }
     if (url.pathname === '/mcp' && req.method === 'POST') {
       const chunks = []
@@ -4026,6 +4087,7 @@ const server = createServer(async (req, res) => {
               { name: 'cluster_tpu', description: 'Paid Solana cluster TPU gossip and RPC endpoints. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'noncirculating_whales', description: 'Paid Solana non-circulating largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'block_production_identity', description: 'Paid Solana block production for one validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
+              { name: 'inflation_reward_epoch', description: 'Paid Solana inflation reward for a chosen epoch. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, epoch: { type: 'string' } }, required: ['address', 'epoch'] } },
             ],
           },
         })
@@ -4124,6 +4186,7 @@ const server = createServer(async (req, res) => {
         cluster_tpu: '/tpu',
         noncirculating_whales: '/ncw',
         block_production_identity: '/bpid',
+        inflation_reward_epoch: '/rewe',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
