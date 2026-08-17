@@ -48,6 +48,7 @@ const ROUTE_PRICE = {
   '/blocks': { usdc: '10000', sol: '10000000' },
   '/nodes': { usdc: '10000', sol: '10000000' },
   '/ver': { usdc: '5000', sol: '5000000' },
+  '/nid': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -322,6 +323,9 @@ const BAZAAR = {
     'solana-core': '2.1.0',
     'feature-set': 0,
   }),
+  '/nid': bazaarExtension({}, {
+    identity: '11111111111111111111111111111111',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -377,6 +381,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/blocks': 'Current-epoch Solana block production skip rate',
         '/nodes': 'Live Solana gossip cluster node counts',
         '/ver': 'Live Solana RPC software version and feature set',
+        '/nid': 'Live Solana RPC node identity pubkey',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -444,7 +449,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                     ? ['solana', 'cluster', 'gossip', 'nodes']
                                                                     : path === '/ver'
                                                                       ? ['solana', 'version', 'feature-set', 'rpc']
-                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                      : path === '/nid'
+                                                                        ? ['solana', 'identity', 'rpc', 'node']
+                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -832,6 +839,14 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function nodeIdentity() {
+  const res = await rpc('getIdentity', [])
+  return {
+    identity: res.result?.identity,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function clusterVersion() {
   const res = await rpc('getVersion', [])
@@ -1638,6 +1653,10 @@ const PAID = {
     validate() {},
     run: async () => clusterVersion(),
   },
+  '/nid': {
+    validate() {},
+    run: async () => nodeIdentity(),
+  },
 }
 
 function catalogResources() {
@@ -1679,6 +1698,7 @@ function catalogResources() {
     { path: '/blocks', description: 'Current-epoch Solana block production skip rate' },
     { path: '/nodes', description: 'Live Solana gossip cluster node counts' },
     { path: '/ver', description: 'Live Solana RPC software version and feature set' },
+    { path: '/nid', description: 'Live Solana RPC node identity pubkey' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1777,6 +1797,7 @@ const server = createServer(async (req, res) => {
               { name: 'block_production', description: 'Paid Solana block-production skip rate. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'cluster_nodes', description: 'Paid Solana gossip cluster node counts. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'cluster_version', description: 'Paid Solana RPC software version. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'node_identity', description: 'Paid Solana RPC node identity. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1818,6 +1839,7 @@ const server = createServer(async (req, res) => {
         block_production: '/blocks',
         cluster_nodes: '/nodes',
         cluster_version: '/ver',
+        node_identity: '/nid',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
