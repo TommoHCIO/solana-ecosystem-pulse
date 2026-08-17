@@ -37,6 +37,7 @@ const ROUTE_PRICE = {
   '/lang': { usdc: '3000', sol: '3000000' },
   '/slug': { usdc: '2000', sol: '2000000' },
   '/fees': { usdc: '10000', sol: '10000000' },
+  '/supply': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -260,6 +261,11 @@ const BAZAAR = {
     p90: 50000,
     samples: 150,
   }),
+  '/supply': bazaarExtension({ mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, {
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    uiAmount: '1000000000',
+    decimals: 6,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -304,6 +310,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/lang': 'Look up ISO 639 language code name',
         '/slug': 'Turn text into a URL slug',
         '/fees': 'Live Solana prioritization fee snapshot',
+        '/supply': 'Current SPL token supply for a mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -349,7 +356,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                               ? ['slug', 'url', 'seo', 'text']
                                               : path === '/fees'
                                                 ? ['solana', 'fees', 'priority', 'compute']
-                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                : path === '/supply'
+                                                  ? ['solana', 'supply', 'mint', 'token']
+                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -734,6 +743,24 @@ const LANG_BY_CODE = {
   fi: { name: 'Finnish', native: 'Suomi' },
   no: { name: 'Norwegian', native: 'Norsk' },
   el: { name: 'Greek', native: 'Ελληνικά' },
+}
+
+async function tokenSupply(mint) {
+  const res = await rpc('getTokenSupply', [mint])
+  const value = res.result?.value
+  if (!value) {
+    const err = new Error('mint supply not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  return {
+    mint,
+    amount: value.amount,
+    decimals: value.decimals,
+    uiAmount: value.uiAmountString || value.uiAmount,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 async function priorityFees() {
@@ -1319,6 +1346,10 @@ const PAID = {
     validate() {},
     run: async () => priorityFees(),
   },
+  '/supply': {
+    validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
+    run: async (url) => tokenSupply(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -1349,6 +1380,7 @@ function catalogResources() {
     { path: '/lang', description: 'Look up ISO 639-1 language code. Query: code' },
     { path: '/slug', description: 'Turn text into a URL slug. Query: text' },
     { path: '/fees', description: 'Live Solana prioritization fee snapshot' },
+    { path: '/supply', description: 'Current SPL token supply. Query: mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1436,6 +1468,7 @@ const server = createServer(async (req, res) => {
               { name: 'lang_lookup', description: 'Paid ISO 639-1 language lookup. 0.003 USDC.', inputSchema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } },
               { name: 'slugify', description: 'Paid URL slug from text. 0.002 USDC.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
               { name: 'priority_fees', description: 'Paid Solana prioritization fee snapshot. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'token_supply', description: 'Paid SPL token supply. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -1466,6 +1499,7 @@ const server = createServer(async (req, res) => {
         lang_lookup: '/lang',
         slugify: '/slug',
         priority_fees: '/fees',
+        token_supply: '/supply',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
