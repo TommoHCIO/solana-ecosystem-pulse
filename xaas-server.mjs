@@ -109,6 +109,7 @@ const ROUTE_PRICE = {
   '/lsid': { usdc: '10000', sol: '10000000' },
   '/mcs': { usdc: '10000', sol: '10000000' },
   '/aslc': { usdc: '10000', sol: '10000000' },
+  '/mslc': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -669,6 +670,10 @@ const BAZAAR = {
     found: false,
     data: null,
   }),
+  '/mslc': bazaarExtension({ addresses: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA', offset: '0', length: '32' }, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -785,6 +790,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/lsid': 'Live Solana leader-schedule slots for one validator identity',
         '/mcs': 'Live Solana signatures after a minimum context slot',
         '/aslc': 'Live Solana account data slice by offset and length',
+        '/mslc': 'Live Solana multi-account data slices by offset and length',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -974,7 +980,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                               ? ['solana', 'signatures', 'mincontext', 'slot']
                                                                                                                                                                                               : path === '/aslc'
                                                                                                                                                                                                 ? ['solana', 'account', 'dataslice', 'bytes']
-                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                : path === '/mslc'
+                                                                                                                                                                                                  ? ['solana', 'accounts', 'dataslice', 'batch']
+                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1074,6 +1082,59 @@ async function multipleAccounts(raw) {
   return {
     count: rows.length,
     found: rows.filter((row) => row.found).length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function parseDataSlice(offsetRaw, lengthRaw) {
+  if (offsetRaw === null || offsetRaw === '') {
+    const err = new Error('offset query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  if (lengthRaw === null || lengthRaw === '') {
+    const err = new Error('length query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const offset = Number(offsetRaw)
+  const length = Number(lengthRaw)
+  if (!Number.isInteger(offset) || offset < 0) {
+    const err = new Error('offset must be a non-negative integer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  if (!Number.isInteger(length) || length < 1 || length > 128) {
+    const err = new Error('length must be an integer from 1 to 128')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return { offset, length }
+}
+
+async function multipleAccountsSlice(addressesRaw, offsetRaw, lengthRaw) {
+  const addresses = parseAddresses(addressesRaw)
+  const { offset, length } = parseDataSlice(offsetRaw, lengthRaw)
+  const res = await rpc('getMultipleAccounts', [addresses, { encoding: 'base64', commitment: 'confirmed', dataSlice: { offset, length } }])
+  const rows = (res.result?.value || []).map((item, index) => ({
+    address: addresses[index],
+    found: Boolean(item),
+    lamports: item?.lamports ?? null,
+    owner: item?.owner ?? null,
+    executable: item?.executable ?? null,
+    data: Array.isArray(item?.data) ? item.data[0] : null,
+  }))
+  return {
+    count: rows.length,
+    found: rows.filter((row) => row.found).length,
+    offset,
+    length,
+    encoding: 'base64',
     accounts: rows,
     generatedAt: new Date().toISOString(),
   }
@@ -3983,6 +4044,13 @@ const PAID = {
     },
     run: async (url) => accountDataSlice(url.searchParams.get('address'), url.searchParams.get('offset'), url.searchParams.get('length')),
   },
+  '/mslc': {
+    validate(url) {
+      parseAddresses(url.searchParams.get('addresses'))
+      parseDataSlice(url.searchParams.get('offset'), url.searchParams.get('length'))
+    },
+    run: async (url) => multipleAccountsSlice(url.searchParams.get('addresses'), url.searchParams.get('offset'), url.searchParams.get('length')),
+  },
 }
 
 function catalogResources() {
@@ -4085,6 +4153,7 @@ function catalogResources() {
     { path: '/lsid', description: 'Live Solana leader-schedule slots for one validator identity' },
     { path: '/mcs', description: 'Live Solana signatures after a minimum context slot' },
     { path: '/aslc', description: 'Live Solana account data slice by offset and length' },
+    { path: '/mslc', description: 'Live Solana multi-account data slices by offset and length' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4247,6 +4316,7 @@ const server = createServer(async (req, res) => {
               { name: 'leader_schedule_identity', description: 'Paid Solana leader-schedule slots for one validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
               { name: 'signatures_min_context', description: 'Paid Solana signatures after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' } }, required: ['address', 'slot'] } },
               { name: 'account_data_slice', description: 'Paid Solana account data slice by offset and length. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['address', 'offset', 'length'] } },
+              { name: 'multiple_account_slices', description: 'Paid Solana multi-account data slices by offset and length. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['addresses', 'offset', 'length'] } },
             ],
           },
         })
@@ -4349,6 +4419,7 @@ const server = createServer(async (req, res) => {
         leader_schedule_identity: '/lsid',
         signatures_min_context: '/mcs',
         account_data_slice: '/aslc',
+        multiple_account_slices: '/mslc',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
