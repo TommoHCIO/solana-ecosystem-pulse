@@ -115,6 +115,7 @@ const ROUTE_PRICE = {
   '/vdel': { usdc: '10000', sol: '10000000' },
   '/bpr': { usdc: '10000', sol: '10000000' },
   '/nver': { usdc: '10000', sol: '10000000' },
+  '/scmt': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -699,6 +700,10 @@ const BAZAAR = {
     count: 0,
     versions: [],
   }),
+  '/scmt': bazaarExtension({}, {
+    slot: 0,
+    totalStake: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -821,6 +826,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/vdel': 'Live Solana delinquent vote accounts including unstaked',
         '/bpr': 'Live Solana block production skip rate for a slot range',
         '/nver': 'Live Solana cluster node versions and feature sets',
+        '/scmt': 'Live Solana current-slot vote commitment lockouts',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1022,7 +1028,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                           ? ['solana', 'blocks', 'production', 'range']
                                                                                                                                                                                                           : path === '/nver'
                                                                                                                                                                                                             ? ['solana', 'cluster', 'version', 'featureset']
-                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                            : path === '/scmt'
+                                                                                                                                                                                                              ? ['solana', 'slot', 'commitment', 'lockouts']
+                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2836,6 +2844,22 @@ async function blockCommitment(slotRaw) {
   }
 }
 
+async function slotCommitment(slotRaw) {
+  const requested = parseOptionalSlot('slot', slotRaw)
+  const slot = requested === null ? (await rpc('getSlot', [])).result : requested
+  const res = await rpc('getSlotCommitment', [slot])
+  const commitment = Array.isArray(res.result?.commitment) ? res.result.commitment : []
+  const committed = commitment.reduce((sum, value) => sum + (Number(value) || 0), 0)
+  return {
+    slot,
+    requested: requested,
+    totalStake: res.result?.totalStake ?? null,
+    committed,
+    samples: commitment.length,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function confirmedBlocks(startRaw, endRaw) {
   const { start, end } = parseBlockRange(startRaw, endRaw)
   const params = end === null ? [start] : [start, end]
@@ -4276,6 +4300,12 @@ const PAID = {
     validate() {},
     run: async () => clusterNodeVersions(),
   },
+  '/scmt': {
+    validate(url) {
+      parseOptionalSlot('slot', url.searchParams.get('slot'))
+    },
+    run: async (url) => slotCommitment(url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -4384,6 +4414,7 @@ function catalogResources() {
     { path: '/vdel', description: 'Live Solana delinquent vote accounts including unstaked' },
     { path: '/bpr', description: 'Live Solana block production skip rate for a slot range' },
     { path: '/nver', description: 'Live Solana cluster node versions and feature sets' },
+    { path: '/scmt', description: 'Live Solana current-slot vote commitment lockouts' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4552,6 +4583,7 @@ const server = createServer(async (req, res) => {
               { name: 'delinquent_votes', description: 'Paid Solana delinquent vote accounts including unstaked. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'block_production_range', description: 'Paid Solana block production skip rate for a slot range. 0.01 USDC.', inputSchema: { type: 'object', properties: { first: { type: 'string' }, last: { type: 'string' } }, required: ['first', 'last'] } },
               { name: 'cluster_node_versions', description: 'Paid Solana cluster node versions and feature sets. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'slot_commitment', description: 'Paid Solana current-slot vote commitment lockouts. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } } } },
             ],
           },
         })
@@ -4660,6 +4692,7 @@ const server = createServer(async (req, res) => {
         delinquent_votes: '/vdel',
         block_production_range: '/bpr',
         cluster_node_versions: '/nver',
+        slot_commitment: '/scmt',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
