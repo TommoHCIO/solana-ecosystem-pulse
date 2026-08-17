@@ -42,11 +42,104 @@ function solAccept() {
   }
 }
 
-function paymentRequired() {
+function bazaarExtension(queryExample, outputExample) {
+  const queryProps = Object.fromEntries(Object.keys(queryExample).map((key) => [key, { type: 'string' }]))
+  return {
+    info: {
+      input: {
+        type: 'http',
+        method: 'GET',
+        queryParams: queryExample,
+      },
+      output: {
+        type: 'json',
+        example: outputExample,
+      },
+    },
+    schema: {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      properties: {
+        input: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', const: 'http' },
+            method: { type: 'string', enum: ['GET'] },
+            queryParams: {
+              type: 'object',
+              properties: queryProps,
+            },
+          },
+          required: ['type', 'method'],
+          additionalProperties: false,
+        },
+        output: {
+          type: 'object',
+          properties: {
+            type: { type: 'string' },
+            example: { type: 'object' },
+          },
+          required: ['type'],
+        },
+      },
+      required: ['input'],
+    },
+  }
+}
+
+const BAZAAR = {
+  '/pulse': bazaarExtension({}, {
+    generatedAt: '2026-08-17T12:02:00.000Z',
+    commitment: 'confirmed',
+    health: 'ok',
+    slot: 439840411,
+    epoch: { epoch: 1018, slotIndex: 1 },
+  }),
+  '/balance': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    lamports: 8616398,
+    sol: 0.008616398,
+    commitment: 'confirmed',
+  }),
+  '/tx': bazaarExtension({ sig: 'FVt5ytSbkf2KX8X9wJFKSSXwL4C2LARU6J9kDQhsqfADU9sqnJ6Bxa2xCZx43fzocpArZVx5CYyq8N1iWsGuWNZ' }, {
+    sig: 'FVt5ytSbkf2KX8X9wJFKSSXwL4C2LARU6J9kDQhsqfADU9sqnJ6Bxa2xCZx43fzocpArZVx5CYyq8N1iWsGuWNZ',
+    found: true,
+  }),
+  '/tokens': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    count: 2,
+    tokens: [],
+  }),
+}
+
+function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
+  const acceptUsdc = {
+    ...usdcAccept(),
+    outputSchema: { input: { type: 'http', method: 'GET', discoverable: true } },
+  }
+  const acceptSol = {
+    ...solAccept(),
+    outputSchema: { input: { type: 'http', method: 'GET', discoverable: true } },
+  }
   return {
     x402Version: 2,
     error: 'PAYMENT_REQUIRED',
-    accepts: [usdcAccept(), solAccept()],
+    resource: {
+      url: origin + path,
+      description: {
+        '/pulse': 'Latest Solana slot, epoch, and health',
+        '/balance': 'Native SOL balance for any address',
+        '/tx': 'Parsed Solana transaction by signature',
+        '/tokens': 'SPL and Token-2022 accounts for any wallet',
+      }[path] || 'Solana chain data',
+      mimeType: 'application/json',
+      serviceName: 'Solana Pulse XaaS',
+      tags: ['solana', 'rpc', 'balance', 'chain-data'],
+    },
+    accepts: [acceptUsdc, acceptSol],
+    extensions: {
+      bazaar: BAZAAR[path] || BAZAAR['/pulse'],
+    },
   }
 }
 
@@ -249,7 +342,7 @@ function catalogResources() {
     method: 'GET',
     description: item.description,
     mimeType: 'application/json',
-    accepts: paymentRequired().accepts,
+    accepts: paymentRequired(item.path).accepts,
   }))
 }
 
@@ -297,7 +390,8 @@ const server = createServer(async (req, res) => {
           'PAYMENT-RESPONSE': encodeHeader({ success: true }),
         })
       }
-      const required = paymentRequired()
+      const origin = 'https://' + (req.headers.host || 'lobby-laptop-shame-achieved.trycloudflare.com')
+      const required = paymentRequired(url.pathname, origin.startsWith('https://127.') ? 'https://lobby-laptop-shame-achieved.trycloudflare.com' : origin)
       return json(res, 402, required, { 'PAYMENT-REQUIRED': encodeHeader(required) })
     }
     if (url.pathname === '/') {
