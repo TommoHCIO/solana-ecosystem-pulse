@@ -75,6 +75,7 @@ const ROUTE_PRICE = {
   '/ldrs': { usdc: '5000', sol: '5000000' },
   '/blk': { usdc: '10000', sol: '10000000' },
   '/blim': { usdc: '5000', sol: '5000000' },
+  '/smin': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -478,6 +479,10 @@ const BAZAAR = {
     count: 0,
     slots: [],
   }),
+  '/smin': bazaarExtension({}, {
+    lamports: 0,
+    sol: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -560,6 +565,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/ldrs': 'Live Solana slot-leader identities for a range',
         '/blk': 'Live Solana confirmed block metadata for a slot',
         '/blim': 'Live Solana confirmed block slots from a start slot',
+        '/smin': 'Live Solana cluster minimum stake delegation',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -681,7 +687,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                           ? ['solana', 'block', 'metadata', 'hash']
                                                                                                                           : path === '/blim'
                                                                                                                             ? ['solana', 'blocks', 'limit', 'slots']
-                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                            : path === '/smin'
+                                                                                                                              ? ['solana', 'stake', 'minimum', 'delegation']
+                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1470,6 +1478,16 @@ async function slotLeaders(startRaw, limitRaw) {
     count: leaders.length,
     unique: new Set(leaders).size,
     leaders,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function stakeMinimumDelegation() {
+  const res = await rpc('getStakeMinimumDelegation', [])
+  const lamports = Number(res.result?.value ?? res.result ?? 0)
+  return {
+    lamports,
+    sol: lamports / 1e9,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -2440,6 +2458,10 @@ const PAID = {
     },
     run: async (url) => blocksWithLimit(url.searchParams.get('start'), url.searchParams.get('limit')),
   },
+  '/smin': {
+    validate() {},
+    run: async () => stakeMinimumDelegation(),
+  },
 }
 
 function catalogResources() {
@@ -2508,6 +2530,7 @@ function catalogResources() {
     { path: '/ldrs', description: 'Live Solana slot-leader identities for a range' },
     { path: '/blk', description: 'Live Solana confirmed block metadata for a slot' },
     { path: '/blim', description: 'Live Solana confirmed block slots from a start slot' },
+    { path: '/smin', description: 'Live Solana cluster minimum stake delegation' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2633,6 +2656,7 @@ const server = createServer(async (req, res) => {
               { name: 'slot_leaders', description: 'Paid Solana getSlotLeaders range. 0.005 USDC.', inputSchema: { type: 'object', properties: { start: { type: 'string' }, limit: { type: 'string' } }, required: ['start'] } },
               { name: 'block_meta', description: 'Paid Solana getBlock metadata for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'blocks_with_limit', description: 'Paid Solana getBlocksWithLimit from a start slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { start: { type: 'string' }, limit: { type: 'string' } }, required: ['start'] } },
+              { name: 'stake_minimum', description: 'Paid Solana getStakeMinimumDelegation. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -2701,6 +2725,7 @@ const server = createServer(async (req, res) => {
         slot_leaders: '/ldrs',
         block_meta: '/blk',
         blocks_with_limit: '/blim',
+        stake_minimum: '/smin',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
