@@ -172,6 +172,7 @@ const ROUTE_PRICE = {
   '/auth': { usdc: '15000', sol: '15000000' },
   '/pump': { usdc: '20000', sol: '20000000' },
   '/jord': { usdc: '20000', sol: '20000000' },
+  '/rcur': { usdc: '20000', sol: '20000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1167,6 +1168,15 @@ const BAZAAR = {
     count: 0,
     orders: [],
   }),
+  '/rcur': bazaarExtension({
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    status: 'active',
+  }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    status: 'active',
+    count: 0,
+    orders: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1346,6 +1356,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/auth': 'Live Solana mint freeze and update authorities for a required mint',
         '/pump': 'Live Pump.fun coin bonding-curve status for a required mint',
         '/jord': 'Live Jupiter trigger orders for a required wallet and status',
+        '/rcur': 'Live Jupiter recurring DCA orders for a required wallet and status',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1661,7 +1672,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                             ? ['solana', 'pumpfun', 'bonding', 'curve']
                                                                                                                                                                                                                                                                                                                             : path === '/jord'
                                                                                                                                                                                                                                                                                                                               ? ['solana', 'jupiter', 'trigger', 'orders']
-                                                                                                                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                              : path === '/rcur'
+                                                                                                                                                                                                                                                                                                                                ? ['solana', 'jupiter', 'recurring', 'dca']
+                                                                                                                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2921,6 +2934,38 @@ async function jupiterPerpTrades(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     trades: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function jupiterRecurringOrders(addressRaw, statusRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const status = requireText('status', statusRaw).toLowerCase()
+  if (status !== 'active' && status !== 'history') {
+    const err = new Error('status must be active or history')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const rcurUrl = 'https://lite-api.jup.ag/recurring/v1/getRecurringOrders?user='
+    + encodeURIComponent(address) + '&orderStatus=' + encodeURIComponent(status)
+    + '&recurringType=time&includeFailedTx=false'
+  const res = await fetch(rcurUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.success === false || body.error) {
+    const err = new Error((body.error && body.error.message) || body.error || 'jupiter recurring orders failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const rows = Array.isArray(body.orders) ? body.orders.slice(0, 20) : []
+  return {
+    address,
+    status,
+    recurringType: 'time',
+    count: Number(body.totalItems ?? rows.length),
+    page: body.page ?? 1,
+    orders: rows,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -6881,6 +6926,22 @@ const PAID = {
       url.searchParams.get('status'),
     ),
   },
+  '/rcur': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+      const status = requireText('status', url.searchParams.get('status')).toLowerCase()
+      if (status !== 'active' && status !== 'history') {
+        const err = new Error('status must be active or history')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => jupiterRecurringOrders(
+      url.searchParams.get('address'),
+      url.searchParams.get('status'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -7046,6 +7107,7 @@ function catalogResources() {
     { path: '/auth', description: 'Live Solana mint freeze and update authorities for a required mint' },
     { path: '/pump', description: 'Live Pump.fun coin bonding-curve status for a required mint' },
     { path: '/jord', description: 'Live Jupiter trigger orders for a required wallet and status' },
+    { path: '/rcur', description: 'Live Jupiter recurring DCA orders for a required wallet and status' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7271,6 +7333,7 @@ const server = createServer(async (req, res) => {
               { name: 'mint_authorities', description: 'Paid Solana mint freeze and update authorities for a required mint. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'pumpfun_coin', description: 'Paid Pump.fun coin bonding-curve status for a required mint. 0.02 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'jupiter_trigger_orders', description: 'Paid Jupiter trigger orders for a required wallet and status. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, status: { type: 'string' } }, required: ['address', 'status'] } },
+              { name: 'jupiter_recurring_orders', description: 'Paid Jupiter recurring DCA orders for a required wallet and status. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, status: { type: 'string' } }, required: ['address', 'status'] } },
             ],
           },
         })
@@ -7436,6 +7499,7 @@ const server = createServer(async (req, res) => {
         mint_authorities: '/auth',
         pumpfun_coin: '/pump',
         jupiter_trigger_orders: '/jord',
+        jupiter_recurring_orders: '/rcur',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
