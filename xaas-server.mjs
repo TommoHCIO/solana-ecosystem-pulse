@@ -24,6 +24,7 @@ const ROUTE_PRICE = {
   '/wallet': { usdc: '10000', sol: '10000000' },
   '/sigs': { usdc: '10000', sol: '10000000' },
   '/account': { usdc: '10000', sol: '10000000' },
+  '/holders': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -191,6 +192,11 @@ const BAZAAR = {
     lamports: 8616398,
     owner: '11111111111111111111111111111111',
   }),
+  '/holders': bazaarExtension({ mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, {
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    count: 20,
+    holders: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -224,6 +230,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/wallet': 'Native SOL plus token holdings for a Solana wallet',
         '/sigs': 'Recent signatures for a Solana address',
         '/account': 'Parsed Solana account info for any address',
+        '/holders': 'Largest token accounts for a Solana mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -247,7 +254,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                         ? ['signatures', 'history', 'solana', 'tx']
                         : path === '/account'
                           ? ['account', 'parsed', 'solana', 'rpc']
-                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                          : path === '/holders'
+                            ? ['holders', 'mint', 'solana', 'whales']
+                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -559,6 +568,16 @@ async function extractPage(target) {
   }
 }
 
+async function tokenHolders(mint) {
+  const res = await rpc('getTokenLargestAccounts', [mint])
+  const holders = (res.result?.value || []).map((row) => ({
+    address: row.address,
+    amount: row.uiAmountString,
+    decimals: row.decimals,
+  }))
+  return { mint, count: holders.length, holders, generatedAt: new Date().toISOString() }
+}
+
 async function accountInfo(address) {
   const res = await rpc('getAccountInfo', [address, { encoding: 'jsonParsed', commitment: 'confirmed' }])
   const value = res.result?.value
@@ -775,6 +794,10 @@ const PAID = {
     validate(url) { requirePubkey('address', url.searchParams.get('address')) },
     run: async (url) => accountInfo(url.searchParams.get('address')),
   },
+  '/holders': {
+    validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
+    run: async (url) => tokenHolders(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -794,6 +817,7 @@ function catalogResources() {
     { path: '/wallet', description: 'Native SOL plus token holdings. Query: address' },
     { path: '/sigs', description: 'Recent signatures for a Solana address. Query: address, optional limit' },
     { path: '/account', description: 'Parsed Solana account info. Query: address' },
+    { path: '/holders', description: 'Largest token accounts for a mint. Query: mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -820,7 +844,7 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/.well-known/mcp/server-card.json') {
       return sendFile(res, join(ROOT, '.well-known/mcp/server-card.json'), 'application/json; charset=utf-8')
     }
-    if (url.pathname === '/.well-known/x402.json') {
+    if (url.pathname === '/.well-known/x402' || url.pathname === '/.well-known/x402.json') {
       return json(res, 200, {
         x402Version: 2,
         name: 'Solana Pulse XaaS',
@@ -870,6 +894,7 @@ const server = createServer(async (req, res) => {
               { name: 'wallet_holdings', description: 'Paid Solana wallet SOL + token holdings. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'recent_sigs', description: 'Paid recent Solana signatures for an address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, limit: { type: 'string' } }, required: ['address'] } },
               { name: 'account_info', description: 'Paid parsed Solana account info. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
+              { name: 'token_holders', description: 'Paid largest Solana token accounts for a mint. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -889,6 +914,7 @@ const server = createServer(async (req, res) => {
         wallet_holdings: '/wallet',
         recent_sigs: '/sigs',
         account_info: '/account',
+        token_holders: '/holders',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')

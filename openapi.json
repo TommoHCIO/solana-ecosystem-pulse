@@ -2,9 +2,9 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Solana Pulse XaaS",
-    "version": "0.26.0",
-    "description": "Solana chain-data APIs for agents. Inspect /sample free. Paid routes return HTTP 402 until PayAI Solana USDC (0.001) or native SOL (0.001) is settled.",
-    "x-guidance": "1) GET /sample to inspect quality. 2) GET a paid route. 3) On 402, pay the first accept (Solana USDC, amount 1000, feePayer 2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4) then retry with PAYMENT-SIGNATURE. Query params are validated before payment."
+    "version": "0.26.3",
+    "description": "Solana agent APIs over HTTP 402. Free /sample. Paid routes accept Solana USDC via PayAI or native SOL.",
+    "x-guidance": "1) GET /sample to inspect quality. 2) GET a paid route WITH the required query params. 3) On 402, pay the first accept (Solana USDC, feePayer 2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4) then retry with PAYMENT-SIGNATURE. Missing params return 400 before payment."
   },
   "servers": [
     { "url": "https://lobby-laptop-shame-achieved.trycloudflare.com" }
@@ -16,63 +16,100 @@
         "responses": { "200": { "description": "Unpaid sample of slot/epoch/health" } }
       }
     },
-    "/pulse": {
+    "/price": {
       "get": {
-        "summary": "Latest Solana slot, epoch, and health",
+        "summary": "USD price for a Solana mint via Jupiter",
+        "parameters": [{ "name": "mint", "in": "query", "required": true, "schema": { "type": "string" }, "example": "So11111111111111111111111111111111111111112" }],
         "x-payment-info": {
-          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.001" },
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.005" },
           "protocols": [{ "name": "x402", "version": 2 }]
         },
         "responses": {
-          "402": { "description": "Pay 0.001 USDC on Solana or 0.001 native SOL" },
-          "200": { "description": "Live pulse JSON" }
+          "400": { "description": "Missing or invalid mint" },
+          "402": { "description": "Pay 0.005 USDC on Solana" },
+          "200": { "description": "USD price JSON" }
         }
       }
     },
-    "/balance": {
+    "/quote": {
       "get": {
-        "summary": "Native SOL balance",
-        "parameters": [{ "name": "address", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "summary": "Jupiter swap quote",
+        "parameters": [
+          { "name": "inputMint", "in": "query", "required": true, "schema": { "type": "string" }, "example": "So11111111111111111111111111111111111111112" },
+          { "name": "outputMint", "in": "query", "required": true, "schema": { "type": "string" }, "example": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" },
+          { "name": "amount", "in": "query", "required": true, "schema": { "type": "string" }, "example": "100000000" }
+        ],
         "x-payment-info": {
-          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.001" },
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.01" },
           "protocols": [{ "name": "x402", "version": 2 }]
         },
-        "responses": {
-          "400": { "description": "Missing or invalid address" },
-          "402": { "description": "Payment required" },
-          "200": { "description": "lamports and SOL" }
-        }
+        "responses": { "400": { "description": "Invalid params" }, "402": { "description": "Payment required" }, "200": { "description": "Quote JSON" } }
       }
     },
-    "/tx": {
+    "/risk": {
       "get": {
-        "summary": "Parsed Solana transaction",
-        "parameters": [{ "name": "sig", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "summary": "Mint/freeze authority and holder concentration",
+        "parameters": [{ "name": "mint", "in": "query", "required": true, "schema": { "type": "string" }, "example": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" }],
         "x-payment-info": {
-          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.001" },
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.02" },
           "protocols": [{ "name": "x402", "version": 2 }]
         },
-        "responses": {
-          "400": { "description": "Missing or invalid sig" },
-          "402": { "description": "Payment required" },
-          "404": { "description": "Transaction not found" },
-          "200": { "description": "Parsed transaction" }
-        }
+        "responses": { "400": { "description": "Invalid mint" }, "402": { "description": "Payment required" }, "200": { "description": "Risk JSON" } }
       }
     },
-    "/tokens": {
+    "/screen": {
       "get": {
-        "summary": "SPL and Token-2022 accounts",
-        "parameters": [{ "name": "address", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "summary": "OFAC SDN screen for a Solana wallet",
+        "parameters": [{ "name": "address", "in": "query", "required": true, "schema": { "type": "string" }, "example": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA" }],
         "x-payment-info": {
-          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.001" },
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.01" },
           "protocols": [{ "name": "x402", "version": 2 }]
         },
-        "responses": {
-          "400": { "description": "Missing or invalid address" },
-          "402": { "description": "Payment required" },
-          "200": { "description": "Token accounts" }
-        }
+        "responses": { "400": { "description": "Invalid address" }, "402": { "description": "Payment required" }, "200": { "description": "Screen JSON" } }
+      }
+    },
+    "/wallet": {
+      "get": {
+        "summary": "Native SOL plus token holdings",
+        "parameters": [{ "name": "address", "in": "query", "required": true, "schema": { "type": "string" }, "example": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA" }],
+        "x-payment-info": {
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.01" },
+          "protocols": [{ "name": "x402", "version": 2 }]
+        },
+        "responses": { "400": { "description": "Invalid address" }, "402": { "description": "Payment required" }, "200": { "description": "Holdings JSON" } }
+      }
+    },
+    "/sigs": {
+      "get": {
+        "summary": "Recent signatures for a Solana address",
+        "parameters": [{ "name": "address", "in": "query", "required": true, "schema": { "type": "string" }, "example": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA" }],
+        "x-payment-info": {
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.01" },
+          "protocols": [{ "name": "x402", "version": 2 }]
+        },
+        "responses": { "400": { "description": "Invalid address" }, "402": { "description": "Payment required" }, "200": { "description": "Signatures JSON" } }
+      }
+    },
+    "/account": {
+      "get": {
+        "summary": "Parsed Solana account info",
+        "parameters": [{ "name": "address", "in": "query", "required": true, "schema": { "type": "string" }, "example": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA" }],
+        "x-payment-info": {
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.01" },
+          "protocols": [{ "name": "x402", "version": 2 }]
+        },
+        "responses": { "400": { "description": "Invalid address" }, "402": { "description": "Payment required" }, "200": { "description": "Account JSON" } }
+      }
+    },
+    "/holders": {
+      "get": {
+        "summary": "Largest token accounts for a Solana mint",
+        "parameters": [{ "name": "mint", "in": "query", "required": true, "schema": { "type": "string" }, "example": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" }],
+        "x-payment-info": {
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.015" },
+          "protocols": [{ "name": "x402", "version": 2 }]
+        },
+        "responses": { "400": { "description": "Invalid mint" }, "402": { "description": "Payment required" }, "200": { "description": "Holders JSON" } }
       }
     }
   }
