@@ -54,6 +54,7 @@ const ROUTE_PRICE = {
   '/epoch': { usdc: '5000', sol: '5000000' },
   '/slot': { usdc: '5000', sol: '5000000' },
   '/bh': { usdc: '5000', sol: '5000000' },
+  '/ht': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -351,6 +352,9 @@ const BAZAAR = {
     blockhash: '11111111111111111111111111111111',
     lastValidBlockHeight: 1,
   }),
+  '/ht': bazaarExtension({}, {
+    blockHeight: 250000000,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -412,6 +416,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/epoch': 'Live Solana epoch schedule parameters',
         '/slot': 'Live Solana current slot',
         '/bh': 'Live Solana latest blockhash and last valid height',
+        '/ht': 'Live Solana finalized block height',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -491,7 +496,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                 ? ['solana', 'slot', 'height', 'cluster']
                                                                                 : path === '/bh'
                                                                                   ? ['solana', 'blockhash', 'latest', 'tx']
-                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                  : path === '/ht'
+                                                                                    ? ['solana', 'height', 'block', 'finalized']
+                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -879,6 +886,14 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function blockHeight() {
+  const res = await rpc('getBlockHeight', [])
+  return {
+    blockHeight: res.result,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function latestBlockhash() {
   const res = await rpc('getLatestBlockhash', [])
@@ -1765,6 +1780,10 @@ const PAID = {
     validate() {},
     run: async () => latestBlockhash(),
   },
+  '/ht': {
+    validate() {},
+    run: async () => blockHeight(),
+  },
 }
 
 function catalogResources() {
@@ -1812,6 +1831,7 @@ function catalogResources() {
     { path: '/epoch', description: 'Live Solana epoch schedule parameters' },
     { path: '/slot', description: 'Live Solana current slot' },
     { path: '/bh', description: 'Live Solana latest blockhash and last valid height' },
+    { path: '/ht', description: 'Live Solana finalized block height' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1916,6 +1936,7 @@ const server = createServer(async (req, res) => {
               { name: 'epoch_schedule', description: 'Paid Solana epoch schedule. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'current_slot', description: 'Paid Solana current slot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'latest_blockhash', description: 'Paid Solana latest blockhash. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'block_height', description: 'Paid Solana finalized block height. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1963,6 +1984,7 @@ const server = createServer(async (req, res) => {
         epoch_schedule: '/epoch',
         current_slot: '/slot',
         latest_blockhash: '/bh',
+        block_height: '/ht',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
