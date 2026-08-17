@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Solana Ecosystem Pulse</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font: 15px/1.45 ui-sans-serif, system-ui, sans-serif; background: #0b1020; color: #e8edf7; }
+    main { max-width: 980px; margin: 0 auto; padding: 28px 20px 64px; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    .muted { color: #93a0bb; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 20px 0; }
+    .card { background: #151b2e; border: 1px solid #243049; border-radius: 12px; padding: 14px; }
+    .label { font-size: 12px; color: #93a0bb; text-transform: uppercase; letter-spacing: .04em; }
+    .value { font-size: 22px; margin-top: 6px; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #243049; }
+    code { color: #9ad1ff; }
+    .bad { color: #ffb4b4; }
+    a { color: #8ab4ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Solana Ecosystem Pulse</h1>
+    <p class="muted">Generated <span id="when"></span> · RPC <code id="rpc"></code></p>
+    <div class="grid" id="cards"></div>
+    <section class="card">
+      <div class="label">Anomalies</div>
+      <ul id="anomalies"></ul>
+    </section>
+    <h2>Top validators by stake</h2>
+    <table>
+      <thead><tr><th>Vote</th><th>Commission</th><th>Stake SOL</th></tr></thead>
+      <tbody id="validators"></tbody>
+    </table>
+    <p class="muted">Official page: <a href="https://solana.com/data">solana.com/data</a>. Refresh by rerunning <code>python pulse.py</code>.</p>
+  </main>
+  <script>
+    const snap = {
+  "generatedAt": "2026-08-17T10:55:01.154258+00:00",
+  "rpc": "https://api.mainnet-beta.solana.com",
+  "errors": [],
+  "anomalies": [],
+  "network": {
+    "health": "ok",
+    "absoluteSlot": 439836036,
+    "blockHeight": 417886557,
+    "epoch": 1018,
+    "slotIndex": 60036,
+    "slotsInEpoch": 432000,
+    "transactionCount": 538938175898,
+    "meanTps": 2876.3983333333335,
+    "meanSlotMs": 415.12366558996393,
+    "sampleCount": 20
+  },
+  "validators": {
+    "active": 689,
+    "delinquent": 6,
+    "delinquentPct": 0.8633093525179856,
+    "activatedStakeLamports": 435642720071043571,
+    "delinquentStakeLamports": 34075730393216,
+    "top": [
+      {
+        "votePubkey": "CcaHc2L43ZWjwCHART3oZoJvHLAe9hzT2DJNUpBzoTN1",
+        "nodePubkey": "Fd7btgySsrjuo25CJCj7oE7VPMyezDhnx7pZkj2v69Nk",
+        "activatedStake": 17091057027625575,
+        "commission": 7
+      },
+      {
+        "votePubkey": "he1iusunGwqrNtafDtLdhsUQDFvo13z9sUa36PauBtk",
+        "nodePubkey": "HEL1USMZKAL2odpNBj2oCjffnFGaYwmbGmyewGv1e2TU",
+        "activatedStake": 16003006030071666,
+        "commission": 0
+      },
+      {
+        "votePubkey": "CatzoSMUkTRidT5DwBxAC2pEtnwMBTpkCepHkFgZDiqb",
+        "nodePubkey": "JUPiTERrZqgf1jUyR7dSkhMx4Kn2qJyekWsg3LT1h4b",
+        "activatedStake": 12495360318190430,
+        "commission": 5
+      },
+      {
+        "votePubkey": "3N7s9zXMZ4QqvHQR15t5GNHyqc89KduzMP7423eWiD5g",
+        "nodePubkey": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+        "activatedStake": 12259520214140781,
+        "commission": 0
+      },
+      {
+        "votePubkey": "26pV97Ce83ZQ6Kz9XT4td8tdoUFPTng8Fb8gPyc53dJx",
+        "nodePubkey": "C8Bey3LKVJHVqN6xPTeW8WJfUgFQAeGNBpT4Rp99JP1k",
+        "activatedStake": 9203435626910640,
+        "commission": 7
+      },
+      {
+        "votePubkey": "51JBzSTU5rAM8gLAVQKgp4WoZerQcSqWC7BitBzgUNAm",
+        "nodePubkey": "CAo1dCGYrB6NhHh5xb1cGjUiu86iyCfMTENxgHumSve4",
+        "activatedStake": 8992380558659794,
+        "commission": 10
+      },
+      {
+        "votePubkey": "8GbwASqdpw4dVcwbWUxbHXMrjyQx2aKkoBR5H1GJF8iD",
+        "nodePubkey": "E1r4Psq84tHfQ6aPTvvDka4U3u8zPVD7gEUrH25RdxHL",
+        "activatedStake": 8305833799687920,
+        "commission": 0
+      },
+      {
+        "votePubkey": "9QU2QSxhb24FUX3Tu2FpczXjpK3VYrvRudywSZaM29mF",
+        "nodePubkey": "EvnRmnMrd69kFdbLMxWkTn1icZ7DCceRhvmb2SJXqDo4",
+        "activatedStake": 7983993322988059,
+        "commission": 7
+      }
+    ]
+  },
+  "economics": {
+    "solUsd": 75.67,
+    "solUsdChange24h": 0.6318310618906358,
+    "circulatingLamports": 582899331463471272,
+    "totalLamports": 632388564787401574,
+    "tvlUsd": 4814541778,
+    "tvlChangeApprox24hPct": 0.11869519911469814
+  },
+  "sources": [
+    "solana json-rpc",
+    "https://api.coingecko.com/api/v3/simple/price",
+    "https://api.llama.fi/v2/historicalChainTvl/Solana",
+    "https://solana.com/data"
+  ]
+};
+    const fmt = (v, d=2) => v == null ? "n/a" : Number(v).toLocaleString(undefined, {maximumFractionDigits: d});
+    document.getElementById("when").textContent = snap.generatedAt;
+    document.getElementById("rpc").textContent = snap.rpc;
+    const cards = [
+      ["Health", snap.network.health],
+      ["Mean TPS", fmt(snap.network.meanTps, 1)],
+      ["Slot ms", fmt(snap.network.meanSlotMs, 1)],
+      ["Epoch", fmt(snap.network.epoch, 0)],
+      ["Active vals", fmt(snap.validators.active, 0)],
+      ["Delinquent %", fmt(snap.validators.delinquentPct, 2)],
+      ["SOL USD", "$" + fmt(snap.economics.solUsd, 2)],
+      ["TVL USD", "$" + fmt(snap.economics.tvlUsd, 0)],
+    ];
+    document.getElementById("cards").innerHTML = cards.map(([k,v]) =>
+      `<div class="card"><div class="label">${k}</div><div class="value">${v}</div></div>`
+    ).join("");
+    const anomalies = snap.anomalies.length ? snap.anomalies : ["none"];
+    document.getElementById("anomalies").innerHTML = anomalies.map(a => `<li class="${snap.anomalies.length ? "bad" : ""}">${a}</li>`).join("");
+    document.getElementById("validators").innerHTML = snap.validators.top.map(v =>
+      `<tr><td><code>${v.votePubkey}</code></td><td>${v.commission}%</td><td>${fmt(v.activatedStake/1e9, 0)}</td></tr>`
+    ).join("");
+  </script>
+</body>
+</html>

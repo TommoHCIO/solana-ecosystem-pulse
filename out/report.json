@@ -1,0 +1,89 @@
+{
+  "generatedAt": "2026-08-17T10:55:01.154258+00:00",
+  "rpc": "https://api.mainnet-beta.solana.com",
+  "errors": [],
+  "anomalies": [],
+  "network": {
+    "health": "ok",
+    "absoluteSlot": 439836036,
+    "blockHeight": 417886557,
+    "epoch": 1018,
+    "slotIndex": 60036,
+    "slotsInEpoch": 432000,
+    "transactionCount": 538938175898,
+    "meanTps": 2876.3983333333335,
+    "meanSlotMs": 415.12366558996393,
+    "sampleCount": 20
+  },
+  "validators": {
+    "active": 689,
+    "delinquent": 6,
+    "delinquentPct": 0.8633093525179856,
+    "activatedStakeLamports": 435642720071043571,
+    "delinquentStakeLamports": 34075730393216,
+    "top": [
+      {
+        "votePubkey": "CcaHc2L43ZWjwCHART3oZoJvHLAe9hzT2DJNUpBzoTN1",
+        "nodePubkey": "Fd7btgySsrjuo25CJCj7oE7VPMyezDhnx7pZkj2v69Nk",
+        "activatedStake": 17091057027625575,
+        "commission": 7
+      },
+      {
+        "votePubkey": "he1iusunGwqrNtafDtLdhsUQDFvo13z9sUa36PauBtk",
+        "nodePubkey": "HEL1USMZKAL2odpNBj2oCjffnFGaYwmbGmyewGv1e2TU",
+        "activatedStake": 16003006030071666,
+        "commission": 0
+      },
+      {
+        "votePubkey": "CatzoSMUkTRidT5DwBxAC2pEtnwMBTpkCepHkFgZDiqb",
+        "nodePubkey": "JUPiTERrZqgf1jUyR7dSkhMx4Kn2qJyekWsg3LT1h4b",
+        "activatedStake": 12495360318190430,
+        "commission": 5
+      },
+      {
+        "votePubkey": "3N7s9zXMZ4QqvHQR15t5GNHyqc89KduzMP7423eWiD5g",
+        "nodePubkey": "DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy",
+        "activatedStake": 12259520214140781,
+        "commission": 0
+      },
+      {
+        "votePubkey": "26pV97Ce83ZQ6Kz9XT4td8tdoUFPTng8Fb8gPyc53dJx",
+        "nodePubkey": "C8Bey3LKVJHVqN6xPTeW8WJfUgFQAeGNBpT4Rp99JP1k",
+        "activatedStake": 9203435626910640,
+        "commission": 7
+      },
+      {
+        "votePubkey": "51JBzSTU5rAM8gLAVQKgp4WoZerQcSqWC7BitBzgUNAm",
+        "nodePubkey": "CAo1dCGYrB6NhHh5xb1cGjUiu86iyCfMTENxgHumSve4",
+        "activatedStake": 8992380558659794,
+        "commission": 10
+      },
+      {
+        "votePubkey": "8GbwASqdpw4dVcwbWUxbHXMrjyQx2aKkoBR5H1GJF8iD",
+        "nodePubkey": "E1r4Psq84tHfQ6aPTvvDka4U3u8zPVD7gEUrH25RdxHL",
+        "activatedStake": 8305833799687920,
+        "commission": 0
+      },
+      {
+        "votePubkey": "9QU2QSxhb24FUX3Tu2FpczXjpK3VYrvRudywSZaM29mF",
+        "nodePubkey": "EvnRmnMrd69kFdbLMxWkTn1icZ7DCceRhvmb2SJXqDo4",
+        "activatedStake": 7983993322988059,
+        "commission": 7
+      }
+    ]
+  },
+  "economics": {
+    "solUsd": 75.67,
+    "solUsdChange24h": 0.6318310618906358,
+    "circulatingLamports": 582899331463471272,
+    "totalLamports": 632388564787401574,
+    "tvlUsd": 4814541778,
+    "tvlChangeApprox24hPct": 0.11869519911469814
+  },
+  "sources": [
+    "solana json-rpc",
+    "https://api.coingecko.com/api/v3/simple/price",
+    "https://api.llama.fi/v2/historicalChainTvl/Solana",
+    "https://solana.com/data"
+  ]
+}
