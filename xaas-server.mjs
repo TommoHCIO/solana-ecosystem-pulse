@@ -97,6 +97,7 @@ const ROUTE_PRICE = {
   '/pda': { usdc: '10000', sol: '10000000' },
   '/curv': { usdc: '5000', sol: '5000000' },
   '/cpi': { usdc: '10000', sol: '10000000' },
+  '/lfee': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -609,9 +610,13 @@ const BAZAAR = {
     err: null,
     inner: [],
   }),
+  '/lfee': bazaarExtension({ accounts: '11111111111111111111111111111111' }, {
+    samples: 0,
+    median: 0,
+  }),
 }
 
-function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
+function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
   const price = ROUTE_PRICE[path] || ROUTE_PRICE['/pulse']
   const acceptUsdc = {
     ...usdcAccept(price.usdc),
@@ -713,6 +718,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/pda': 'Live Solana program derived address and existence',
         '/curv': 'Live Solana pubkey on-curve versus PDA check',
         '/cpi': 'Live Solana parsed inner CPI instructions for a signature',
+        '/lfee': 'Live Solana account-specific prioritization fees',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -878,7 +884,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                                       ? ['solana', 'pubkey', 'curve', 'pda']
                                                                                                                                                                       : path === '/cpi'
                                                                                                                                                                         ? ['solana', 'transaction', 'cpi', 'inner']
-                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                        : path === '/lfee'
+                                                                                                                                                                          ? ['solana', 'fees', 'priority', 'local']
+                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2571,6 +2579,40 @@ async function priorityFees() {
   }
 }
 
+function parseFeeAccounts(raw) {
+  if (raw === null || raw === '') {
+    const err = new Error('accounts query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const parts = String(raw).split(',').map((part) => part.trim()).filter(Boolean).slice(0, 8)
+  if (parts.length === 0) {
+    const err = new Error('accounts must list at least one public key')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return parts.map((part) => requirePubkey('accounts', part))
+}
+
+async function localPriorityFees(accountsRaw) {
+  const accounts = parseFeeAccounts(accountsRaw)
+  const res = await rpc('getRecentPrioritizationFees', [accounts])
+  const values = (res.result || []).map((row) => Number(row.prioritizationFee)).filter((n) => Number.isFinite(n)).sort((a, b) => a - b)
+  const at = (p) => values.length ? values[Math.min(values.length - 1, Math.floor((values.length - 1) * p))] : 0
+  return {
+    accounts,
+    samples: values.length,
+    min: values[0] || 0,
+    median: at(0.5),
+    p90: at(0.9),
+    max: values[values.length - 1] || 0,
+    unit: 'micro-lamports-per-cu',
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 function makeSlug(raw) {
   const text = requireText('text', raw)
   if (text.length > 200) {
@@ -3501,6 +3543,10 @@ const PAID = {
     validate(url) { requireSig('sig', url.searchParams.get('sig')) },
     run: async (url) => transactionInnerInstructions(url.searchParams.get('sig')),
   },
+  '/lfee': {
+    validate(url) { parseFeeAccounts(url.searchParams.get('accounts')) },
+    run: async (url) => localPriorityFees(url.searchParams.get('accounts')),
+  },
 }
 
 function catalogResources() {
@@ -3591,6 +3637,7 @@ function catalogResources() {
     { path: '/pda', description: 'Live Solana program derived address and existence' },
     { path: '/curv', description: 'Live Solana pubkey on-curve versus PDA check' },
     { path: '/cpi', description: 'Live Solana parsed inner CPI instructions for a signature' },
+    { path: '/lfee', description: 'Live Solana account-specific prioritization fees' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3738,6 +3785,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_derived_address', description: 'Paid Solana PDA derive and existence check. 0.01 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, seeds: { type: 'string' } }, required: ['program', 'seeds'] } },
               { name: 'pubkey_curve', description: 'Paid Solana pubkey on-curve versus PDA check. 0.005 USDC.', inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] } },
               { name: 'inner_instructions', description: 'Paid Solana parsed inner CPI instructions. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
+              { name: 'local_priority_fees', description: 'Paid Solana account-specific prioritization fees. 0.01 USDC.', inputSchema: { type: 'object', properties: { accounts: { type: 'string' } }, required: ['accounts'] } },
             ],
           },
         })
@@ -3828,9 +3876,10 @@ const server = createServer(async (req, res) => {
         program_derived_address: '/pda',
         pubkey_curve: '/curv',
         inner_instructions: '/cpi',
+        local_priority_fees: '/lfee',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
-        const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
+        const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
         return json(res, 402, required, { 'PAYMENT-REQUIRED': encodeHeader(required) })
       }
       return json(res, 200, { jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } })
@@ -3840,7 +3889,7 @@ const server = createServer(async (req, res) => {
         name: 'solana-pulse-xaas',
         description: 'Solana quotes and package preflight for agents. Free /sample. Paid Jupiter quote 0.01 USDC, license 0.10, preflight 0.15.',
         transport: 'http',
-        url: 'https://lobby-laptop-shame-achieved.trycloudflare.com/mcp',
+        url: 'https://meant-aye-allan-exit.trycloudflare.com/mcp',
         payTo: PAY_TO,
       })
     }
@@ -3862,8 +3911,8 @@ const server = createServer(async (req, res) => {
           'PAYMENT-RESPONSE': encodeHeader({ success: true }),
         })
       }
-      const origin = 'https://' + (req.headers.host || 'lobby-laptop-shame-achieved.trycloudflare.com')
-      const required = paymentRequired(url.pathname, origin.startsWith('https://127.') ? 'https://lobby-laptop-shame-achieved.trycloudflare.com' : origin)
+      const origin = 'https://' + (req.headers.host || 'meant-aye-allan-exit.trycloudflare.com')
+      const required = paymentRequired(url.pathname, origin.startsWith('https://127.') ? 'https://meant-aye-allan-exit.trycloudflare.com' : origin)
       return json(res, 402, required, { 'PAYMENT-REQUIRED': encodeHeader(required) })
     }
     if (url.pathname === '/') {
