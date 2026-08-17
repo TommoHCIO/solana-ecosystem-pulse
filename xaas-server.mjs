@@ -166,6 +166,7 @@ const ROUTE_PRICE = {
   '/vnid': { usdc: '10000', sol: '10000000' },
   '/perp': { usdc: '50000', sol: '50000000' },
   '/jpos': { usdc: '50000', sol: '50000000' },
+  '/wrsk': { usdc: '20000', sol: '20000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1114,6 +1115,14 @@ const BAZAAR = {
     count: 0,
     positions: [],
   }),
+  '/wrsk': bazaarExtension({
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+  }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    score: 0,
+    verdict: 'ok',
+    flags: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1287,6 +1296,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/vnid': 'Live Solana vote accounts for a required validator identity',
         '/perp': 'Live Jupiter perpetual liquidity borrow and utilization for a required market mint',
         '/jpos': 'Live Jupiter perpetual positions for a required wallet address',
+        '/wrsk': 'Scored Solana wallet risk from live balance activity and OFAC screen',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1590,7 +1600,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                 ? ['solana', 'jupiter', 'perps', 'funding']
                                                                                                                                                                                                                                                                                                                 : path === '/jpos'
                                                                                                                                                                                                                                                                                                                   ? ['solana', 'jupiter', 'perps', 'positions']
-                                                                                                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                  : path === '/wrsk'
+                                                                                                                                                                                                                                                                                                                    ? ['solana', 'wallet', 'risk', 'score']
+                                                                                                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -5449,6 +5461,43 @@ async function walletSnapshot(address) {
   }
 }
 
+async function walletRisk(addressRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const [balance, tokens, sigs, screen] = await Promise.all([
+    solBalance(address),
+    solTokens(address),
+    recentSigs(address, 20),
+    ofacScreen(address),
+  ])
+  const failed = (sigs.signatures || []).filter((row) => row.err).length
+  const flags = []
+  if (screen.hit) flags.push('ofac_hit')
+  if ((balance.lamports || 0) === 0) flags.push('empty_native')
+  if ((tokens.count || 0) === 0) flags.push('no_spl_tokens')
+  if ((sigs.count || 0) === 0) flags.push('no_recent_activity')
+  if (failed >= 5) flags.push('high_failed_txs')
+  let score = 0
+  if (screen.hit) score += 80
+  if (flags.includes('empty_native')) score += 10
+  if (flags.includes('no_spl_tokens')) score += 5
+  if (flags.includes('no_recent_activity')) score += 5
+  if (flags.includes('high_failed_txs')) score += 15
+  if (score > 100) score = 100
+  const verdict = screen.hit ? 'block' : score >= 30 ? 'review' : score > 0 ? 'watch' : 'ok'
+  return {
+    address,
+    score,
+    verdict,
+    flags,
+    sol: balance.sol,
+    tokenCount: tokens.count,
+    recentTx: sigs.count,
+    failedTx: failed,
+    ofac: screen.verdict,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function mintPrice(mint) {
   const usdc = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
   const sol = 'So11111111111111111111111111111111111111112'
@@ -6603,6 +6652,12 @@ const PAID = {
     },
     run: async (url) => jupiterPerpPositions(url.searchParams.get('address')),
   },
+  '/wrsk': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+    },
+    run: async (url) => walletRisk(url.searchParams.get('address')),
+  },
 }
 
 function catalogResources() {
@@ -6762,6 +6817,7 @@ function catalogResources() {
     { path: '/vnid', description: 'Live Solana vote accounts for a required validator identity' },
     { path: '/perp', description: 'Live Jupiter perpetual liquidity borrow and utilization for a required market mint' },
     { path: '/jpos', description: 'Live Jupiter perpetual positions for a required wallet address' },
+    { path: '/wrsk', description: 'Scored Solana wallet risk from live balance activity and OFAC screen' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6981,6 +7037,7 @@ const server = createServer(async (req, res) => {
               { name: 'vote_accounts_by_identity', description: 'Paid Solana vote accounts for a required validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
               { name: 'jupiter_perp_pool', description: 'Paid Jupiter perpetual liquidity, borrow, and utilization for SOL ETH or WBTC. 0.05 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'jupiter_perp_positions', description: 'Paid Jupiter perpetual positions for a required wallet address. 0.05 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
+              { name: 'wallet_risk_score', description: 'Paid scored Solana wallet risk from live balance activity and OFAC screen. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
             ],
           },
         })
@@ -7140,6 +7197,7 @@ const server = createServer(async (req, res) => {
         vote_accounts_by_identity: '/vnid',
         jupiter_perp_pool: '/perp',
         jupiter_perp_positions: '/jpos',
+        wallet_risk_score: '/wrsk',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
