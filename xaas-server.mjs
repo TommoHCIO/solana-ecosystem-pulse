@@ -90,6 +90,7 @@ const ROUTE_PRICE = {
   '/stk': { usdc: '10000', sol: '10000000' },
   '/vac': { usdc: '10000', sol: '10000000' },
   '/mdt': { usdc: '10000', sol: '10000000' },
+  '/ata': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -570,6 +571,11 @@ const BAZAAR = {
     decimals: 6,
     supply: '0',
   }),
+  '/ata': bazaarExtension({ owner: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA', mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, {
+    ata: '',
+    exists: false,
+    lamports: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -667,6 +673,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/stk': 'Live Solana parsed stake account delegation and authorities',
         '/vac': 'Live Solana vote-account commission identity and activated stake',
         '/mdt': 'Live Solana mint name symbol decimals supply and authorities',
+        '/ata': 'Live Solana associated token account address and existence',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -818,7 +825,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                         ? ['solana', 'vote', 'commission', 'validator']
                                                                                                                                                         : path === '/mdt'
                                                                                                                                                           ? ['solana', 'token', 'metadata', 'mint']
-                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                          : path === '/ata'
+                                                                                                                                                            ? ['solana', 'token', 'ata', 'associated']
+                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -925,6 +934,126 @@ async function multipleAccounts(raw) {
 
 function isPubkey(value) {
   return typeof value === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)
+}
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+const ASSOCIATED_TOKEN_PROGRAM = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'
+
+function decodeBase58(value) {
+  const bytes = [0]
+  for (const char of value) {
+    const digit = BASE58_ALPHABET.indexOf(char)
+    if (digit < 0) return null
+    let carry = digit
+    for (let i = 0; i < bytes.length; i += 1) {
+      carry += bytes[i] * 58
+      bytes[i] = carry & 255
+      carry >>= 8
+    }
+    while (carry > 0) {
+      bytes.push(carry & 255)
+      carry >>= 8
+    }
+  }
+  let zeros = 0
+  while (zeros < value.length && value[zeros] === '1') zeros += 1
+  const out = Buffer.alloc(zeros + bytes.length)
+  for (let i = 0; i < bytes.length; i += 1) out[out.length - 1 - i] = bytes[i]
+  return out
+}
+
+function encodeBase58(buffer) {
+  const bytes = [0]
+  for (const byte of buffer) {
+    let carry = byte
+    for (let i = 0; i < bytes.length; i += 1) {
+      carry += bytes[i] << 8
+      bytes[i] = carry % 58
+      carry = (carry / 58) | 0
+    }
+    while (carry > 0) {
+      bytes.push(carry % 58)
+      carry = (carry / 58) | 0
+    }
+  }
+  let zeros = 0
+  while (zeros < buffer.length && buffer[zeros] === 0) zeros += 1
+  return '1'.repeat(zeros) + bytes.reverse().map((n) => BASE58_ALPHABET[n]).join('')
+}
+
+function ed25519OnCurve(pubkey) {
+  if (pubkey.length !== 32) return false
+  const y = BigInt('0x' + Buffer.from(pubkey).reverse().toString('hex')) & ((1n << 255n) - 1n)
+  const p = (1n << 255n) - 19n
+  const d = 37095705934669439343138083508754565189542113879843219016388785533085940283555n
+  const yy = (y * y) % p
+  const u = (yy + p - 1n) % p
+  const v = ((d * yy) % p + 1n) % p
+  const x2 = (u * modInverse(v, p)) % p
+  return modPow(x2, (p - 1n) / 2n, p) !== p - 1n
+}
+
+function modPow(base, exp, mod) {
+  let result = 1n
+  let b = base % mod
+  let e = exp
+  while (e > 0n) {
+    if (e & 1n) result = (result * b) % mod
+    b = (b * b) % mod
+    e >>= 1n
+  }
+  return result
+}
+
+function modInverse(value, mod) {
+  return modPow(value, mod - 2n, mod)
+}
+
+function findProgramAddress(seeds, programId) {
+  for (let bump = 255; bump >= 0; bump -= 1) {
+    const hash = createHash('sha256')
+    for (const seed of seeds) hash.update(seed)
+    hash.update(Buffer.from([bump]))
+    hash.update(programId)
+    hash.update(Buffer.from('ProgramDerivedAddress'))
+    const digest = hash.digest()
+    if (!ed25519OnCurve(digest)) return { address: encodeBase58(digest), bump }
+  }
+  const err = new Error('unable to find program address')
+  err.status = 500
+  err.code = 'pda_failed'
+  throw err
+}
+
+async function associatedTokenAccount(ownerRaw, mintRaw) {
+  const owner = requirePubkey('owner', ownerRaw)
+  const mint = requirePubkey('mint', mintRaw)
+  const ownerBytes = decodeBase58(owner)
+  const mintBytes = decodeBase58(mint)
+  const programBytes = decodeBase58(TOKEN_PROGRAM)
+  const ataProgramBytes = decodeBase58(ASSOCIATED_TOKEN_PROGRAM)
+  if (!ownerBytes || !mintBytes || !programBytes || !ataProgramBytes || ownerBytes.length !== 32 || mintBytes.length !== 32) {
+    const err = new Error('owner and mint must be 32-byte public keys')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const derived = findProgramAddress([ownerBytes, programBytes, mintBytes], ataProgramBytes)
+  const info = await rpc('getAccountInfo', [derived.address, { encoding: 'jsonParsed', commitment: 'confirmed' }])
+  const value = info.result?.value
+  const parsed = value?.data?.parsed?.info || {}
+  return {
+    owner,
+    mint,
+    ata: derived.address,
+    bump: derived.bump,
+    exists: Boolean(value),
+    lamports: value?.lamports ?? 0,
+    ownerMatch: parsed.owner || null,
+    amount: parsed.tokenAmount?.uiAmountString || parsed.tokenAmount?.amount || null,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 function requireSig(name, value) {
@@ -3053,6 +3182,13 @@ const PAID = {
     validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
     run: async (url) => mintMetadata(url.searchParams.get('mint')),
   },
+  '/ata': {
+    validate(url) {
+      requirePubkey('owner', url.searchParams.get('owner'))
+      requirePubkey('mint', url.searchParams.get('mint'))
+    },
+    run: async (url) => associatedTokenAccount(url.searchParams.get('owner'), url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -3136,6 +3272,7 @@ function catalogResources() {
     { path: '/stk', description: 'Live Solana parsed stake account delegation and authorities' },
     { path: '/vac', description: 'Live Solana vote-account commission identity and activated stake' },
     { path: '/mdt', description: 'Live Solana mint name symbol decimals supply and authorities' },
+    { path: '/ata', description: 'Live Solana associated token account address and existence' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3276,6 +3413,7 @@ const server = createServer(async (req, res) => {
               { name: 'stake_account', description: 'Paid Solana parsed stake account delegation. 0.01 USDC.', inputSchema: { type: 'object', properties: { stake: { type: 'string' } }, required: ['stake'] } },
               { name: 'vote_account', description: 'Paid Solana vote-account commission and identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { vote: { type: 'string' } }, required: ['vote'] } },
               { name: 'mint_metadata', description: 'Paid Solana mint name symbol decimals and authorities. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'associated_token_account', description: 'Paid Solana ATA derive and existence check. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' } }, required: ['owner', 'mint'] } },
             ],
           },
         })
@@ -3359,6 +3497,7 @@ const server = createServer(async (req, res) => {
         stake_account: '/stk',
         vote_account: '/vac',
         mint_metadata: '/mdt',
+        associated_token_account: '/ata',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
