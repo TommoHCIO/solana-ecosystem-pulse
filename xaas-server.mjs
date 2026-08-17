@@ -169,6 +169,7 @@ const ROUTE_PRICE = {
   '/wrsk': { usdc: '20000', sol: '20000000' },
   '/jtrd': { usdc: '50000', sol: '50000000' },
   '/jtip': { usdc: '10000', sol: '10000000' },
+  '/auth': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1139,6 +1140,15 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/auth': bazaarExtension({
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  }, {
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    mintAuthority: null,
+    freezeAuthority: null,
+    updateAuthority: null,
+    verdict: 'ok',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1315,6 +1325,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/wrsk': 'Scored Solana wallet risk from live balance activity and OFAC screen',
         '/jtrd': 'Live Jupiter perpetual trade history for a required wallet address',
         '/jtip': 'Live Jito block-engine tip accounts for a required account limit',
+        '/auth': 'Live Solana mint freeze and update authorities for a required mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1624,7 +1635,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                       ? ['solana', 'jupiter', 'perps', 'trades']
                                                                                                                                                                                                                                                                                                                       : path === '/jtip'
                                                                                                                                                                                                                                                                                                                         ? ['solana', 'jito', 'tips', 'mev']
-                                                                                                                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                        : path === '/auth'
+                                                                                                                                                                                                                                                                                                                          ? ['solana', 'mint', 'authority', 'deployer']
+                                                                                                                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -4768,6 +4781,27 @@ async function mintMetadata(mintRaw) {
   }
 }
 
+async function mintAuthorities(mintRaw) {
+  const meta = await mintMetadata(mintRaw)
+  const flags = []
+  if (meta.mintAuthority) flags.push('mint_authority_live')
+  if (meta.freezeAuthority) flags.push('freeze_authority_live')
+  const updateAuthority = meta.uri ? 'metadata_uri_present' : null
+  if (updateAuthority) flags.push('metadata_uri_present')
+  const verdict = meta.mintAuthority && meta.freezeAuthority ? 'review' : flags.length ? 'watch' : 'ok'
+  return {
+    mint: meta.mint,
+    mintAuthority: meta.mintAuthority,
+    freezeAuthority: meta.freezeAuthority,
+    updateAuthority,
+    name: meta.name,
+    symbol: meta.symbol,
+    flags,
+    verdict,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function priorityFees() {
   const res = await rpc('getRecentPrioritizationFees', [[]])
   const values = (res.result || []).map((row) => Number(row.prioritizationFee)).filter((n) => Number.isFinite(n)).sort((a, b) => a - b)
@@ -6736,6 +6770,12 @@ const PAID = {
     },
     run: async (url) => jitoTipAccounts(url.searchParams.get('limit')),
   },
+  '/auth': {
+    validate(url) {
+      requirePubkey('mint', url.searchParams.get('mint'))
+    },
+    run: async (url) => mintAuthorities(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -6898,6 +6938,7 @@ function catalogResources() {
     { path: '/wrsk', description: 'Scored Solana wallet risk from live balance activity and OFAC screen' },
     { path: '/jtrd', description: 'Live Jupiter perpetual trade history for a required wallet address' },
     { path: '/jtip', description: 'Live Jito block-engine tip accounts for a required account limit' },
+    { path: '/auth', description: 'Live Solana mint freeze and update authorities for a required mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7120,6 +7161,7 @@ const server = createServer(async (req, res) => {
               { name: 'wallet_risk_score', description: 'Paid scored Solana wallet risk from live balance activity and OFAC screen. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'jupiter_perp_trades', description: 'Paid Jupiter perpetual trade history for a required wallet address. 0.05 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'jito_tip_accounts', description: 'Paid Jito block-engine tip accounts for a required account limit. 0.01 USDC.', inputSchema: { type: 'object', properties: { limit: { type: 'string' } }, required: ['limit'] } },
+              { name: 'mint_authorities', description: 'Paid Solana mint freeze and update authorities for a required mint. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -7282,6 +7324,7 @@ const server = createServer(async (req, res) => {
         wallet_risk_score: '/wrsk',
         jupiter_perp_trades: '/jtrd',
         jito_tip_accounts: '/jtip',
+        mint_authorities: '/auth',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
