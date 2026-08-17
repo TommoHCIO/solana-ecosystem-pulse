@@ -83,6 +83,7 @@ const ROUTE_PRICE = {
   '/ffm': { usdc: '10000', sol: '10000000' },
   '/sim': { usdc: '15000', sol: '15000000' },
   '/nce': { usdc: '10000', sol: '10000000' },
+  '/brw': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -526,6 +527,12 @@ const BAZAAR = {
     blockhash: '',
     feeCalculator: null,
   }),
+  '/brw': bazaarExtension({ slot: '439000000' }, {
+    slot: 439000000,
+    count: 0,
+    lamports: 0,
+    rewards: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -616,6 +623,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/ffm': 'Live Solana fee for a serialized transaction message',
         '/sim': 'Live Solana simulateTransaction preflight for a signed transaction',
         '/nce': 'Live Solana durable nonce account metadata',
+        '/brw': 'Live Solana getBlock reward rows for a slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -753,7 +761,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                           ? ['solana', 'simulate', 'transaction', 'preflight']
                                                                                                                                           : path === '/nce'
                                                                                                                                             ? ['solana', 'nonce', 'durable', 'account']
-                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                            : path === '/brw'
+                                                                                                                                              ? ['solana', 'block', 'rewards', 'lamports']
+                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1711,6 +1721,38 @@ async function blockMeta(slotRaw) {
     blockTime: value.blockTime ?? null,
     txCount: Array.isArray(value.transactions) ? value.transactions.length : 0,
     rewards: Array.isArray(value.rewards) ? value.rewards.length : 0,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function blockRewards(slotRaw) {
+  const slot = parseSlot(slotRaw)
+  const res = await rpc('getBlock', [slot, {
+    encoding: 'json',
+    transactionDetails: 'none',
+    rewards: true,
+    maxSupportedTransactionVersion: 0,
+  }])
+  const value = res.result
+  if (!value) {
+    const err = new Error('block not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const rewards = (Array.isArray(value.rewards) ? value.rewards : []).slice(0, 16).map((item) => ({
+    pubkey: item.pubkey ?? null,
+    lamports: item.lamports ?? 0,
+    postBalance: item.postBalance ?? null,
+    rewardType: item.rewardType ?? null,
+    commission: item.commission ?? null,
+  }))
+  return {
+    slot,
+    blockhash: value.blockhash ?? null,
+    count: Array.isArray(value.rewards) ? value.rewards.length : 0,
+    lamports: rewards.reduce((sum, item) => sum + (Number(item.lamports) || 0), 0),
+    rewards,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -2720,6 +2762,10 @@ const PAID = {
     validate(url) { requirePubkey('nonce', url.searchParams.get('nonce')) },
     run: async (url) => nonceAccount(url.searchParams.get('nonce')),
   },
+  '/brw': {
+    validate(url) { parseSlot(url.searchParams.get('slot')) },
+    run: async (url) => blockRewards(url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -2796,6 +2842,7 @@ function catalogResources() {
     { path: '/ffm', description: 'Live Solana fee for a serialized transaction message' },
     { path: '/sim', description: 'Live Solana simulateTransaction preflight for a signed transaction' },
     { path: '/nce', description: 'Live Solana durable nonce account metadata' },
+    { path: '/brw', description: 'Live Solana getBlock reward rows for a slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2929,6 +2976,7 @@ const server = createServer(async (req, res) => {
               { name: 'fee_for_message', description: 'Paid Solana getFeeForMessage for a serialized message. 0.01 USDC.', inputSchema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] } },
               { name: 'simulate_transaction', description: 'Paid Solana simulateTransaction preflight. 0.015 USDC.', inputSchema: { type: 'object', properties: { tx: { type: 'string' } }, required: ['tx'] } },
               { name: 'nonce_account', description: 'Paid Solana durable nonce account metadata. 0.01 USDC.', inputSchema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } },
+              { name: 'block_rewards', description: 'Paid Solana getBlock reward rows for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
             ],
           },
         })
@@ -3005,6 +3053,7 @@ const server = createServer(async (req, res) => {
         fee_for_message: '/ffm',
         simulate_transaction: '/sim',
         nonce_account: '/nce',
+        block_rewards: '/brw',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
