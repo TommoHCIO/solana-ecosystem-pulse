@@ -24,7 +24,7 @@ function paymentRequired() {
       payTo: PAY_TO,
       maxTimeoutSeconds: 300,
       extra: {
-        solanaPay: `solana:${PAY_TO}?amount=${PRICE_SOL}&label=Solana%20Pulse%20XaaS&message=GET%20/pulse`,
+        solanaPay: `solana:${PAY_TO}?amount=${PRICE_SOL}&label=Solana%20Pulse%20XaaS&message=paid-call`,
       },
     }],
   }
@@ -89,6 +89,61 @@ async function latestPulse() {
   }
 }
 
+async function solBalance(address) {
+  if (!address) throw new Error('address required')
+  const bal = await rpc('getBalance', [address, { commitment: 'confirmed' }])
+  const lamports = bal.result?.value ?? null
+  return {
+    address,
+    lamports,
+    sol: lamports == null ? null : lamports / 1e9,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function solTx(sig) {
+  if (!sig) throw new Error('sig required')
+  const tx = await rpc('getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }])
+  return { sig, tx: tx.result ?? null, generatedAt: new Date().toISOString() }
+}
+
+async function solTokens(address) {
+  if (!address) throw new Error('address required')
+  const token = await rpc('getTokenAccountsByOwner', [
+    address,
+    { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
+    { encoding: 'jsonParsed' },
+  ])
+  const rows = (token.result?.value ?? []).map((item) => ({
+    pubkey: item.pubkey,
+    mint: item.account.data.parsed?.info?.mint,
+    amount: item.account.data.parsed?.info?.tokenAmount?.uiAmountString,
+  }))
+  return { address, tokens: rows, generatedAt: new Date().toISOString() }
+}
+
+const PAID = {
+  '/pulse': async () => latestPulse(),
+  '/balance': async (url) => solBalance(url.searchParams.get('address')),
+  '/tx': async (url) => solTx(url.searchParams.get('sig')),
+  '/tokens': async (url) => solTokens(url.searchParams.get('address')),
+}
+
+function catalogResources() {
+  return [
+    { path: '/pulse', description: 'Latest Solana slot, epoch, and health' },
+    { path: '/balance', description: 'Native SOL balance for any address. Query: address' },
+    { path: '/tx', description: 'Parsed Solana transaction by signature. Query: sig' },
+    { path: '/tokens', description: 'SPL token accounts for any wallet. Query: address' },
+  ].map((item) => ({
+    resource: item.path,
+    method: 'GET',
+    description: item.description,
+    mimeType: 'application/json',
+    accepts: paymentRequired().accepts,
+  }))
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
   if (req.method === 'OPTIONS') {
@@ -104,15 +159,9 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         x402Version: 2,
         name: 'Solana Pulse XaaS',
-        description: 'Live Solana slot/epoch pulse for AI agents. Pay 0.001 SOL per call.',
+        description: 'Solana chain-data APIs for AI agents. Pay 0.001 SOL per call. Bazaar has Ethereum RPC wrappers; these fill the Solana gap.',
         payTo: PAY_TO,
-        resources: [{
-          resource: '/pulse',
-          method: 'GET',
-          description: 'Latest Solana slot, epoch, and health',
-          mimeType: 'application/json',
-          accepts: paymentRequired().accepts,
-        }],
+        resources: catalogResources(),
       })
     }
     if (url.pathname === '/openapi.json') {
@@ -121,13 +170,14 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/llms.txt') {
       return sendFile(res, join(ROOT, 'llms.txt'), 'text/plain; charset=utf-8')
     }
-    if (url.pathname === '/pulse') {
-      const sig = url.searchParams.get('sig')
+    const handler = PAID[url.pathname]
+    if (handler) {
+      const proof = url.searchParams.get('payment')
         || req.headers['payment-signature']
         || req.headers['x-payment']
-      if (await paymentOk(String(sig || ''))) {
-        return json(res, 200, await latestPulse(), {
-          'PAYMENT-RESPONSE': encodeHeader({ success: true, tx: sig }),
+      if (await paymentOk(String(proof || ''))) {
+        return json(res, 200, await handler(url), {
+          'PAYMENT-RESPONSE': encodeHeader({ success: true, tx: proof }),
         })
       }
       const required = paymentRequired()
@@ -137,8 +187,10 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         name: 'Solana Pulse XaaS',
         payTo: PAY_TO,
-        paid: { path: '/pulse', priceSol: PRICE_SOL },
+        paid: Object.keys(PAID),
+        priceSol: PRICE_SOL,
         catalog: '/.well-known/x402.json',
+        gap: 'CDP Bazaar top sellers are Ethereum RPC wrappers. Solana slot/balance/tx/token lookups are missing. These endpoints fill that gap.',
       })
     }
     res.writeHead(404, { 'content-type': 'application/json' })

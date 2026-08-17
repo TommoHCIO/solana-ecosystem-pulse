@@ -7,7 +7,64 @@
     {
       "resource": "https://lobby-laptop-shame-achieved.trycloudflare.com/pulse",
       "method": "GET",
-      "description": "Live Solana slot/epoch/health for AI agents. HTTP 402, 0.001 SOL per call.",
+      "description": "Live Solana slot/epoch/health. HTTP 402, 0.001 SOL.",
+      "mimeType": "application/json",
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          "amount": "1000000",
+          "asset": "native",
+          "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=paid-call"
+          }
+        }
+      ]
+    },
+    {
+      "resource": "https://lobby-laptop-shame-achieved.trycloudflare.com/balance",
+      "method": "GET",
+      "description": "Native SOL balance for any address. Query: address. Missing from CDP Bazaar (Ethereum-only RPC wrappers).",
+      "mimeType": "application/json",
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          "amount": "1000000",
+          "asset": "native",
+          "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=paid-call"
+          }
+        }
+      ]
+    },
+    {
+      "resource": "https://lobby-laptop-shame-achieved.trycloudflare.com/tx",
+      "method": "GET",
+      "description": "Parsed Solana transaction by signature. Query: sig. Missing from CDP Bazaar.",
+      "mimeType": "application/json",
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          "amount": "1000000",
+          "asset": "native",
+          "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=paid-call"
+          }
+        }
+      ]
+    },
+    {
+      "resource": "https://lobby-laptop-shame-achieved.trycloudflare.com/tokens",
+      "method": "GET",
+      "description": "SPL token accounts for any wallet. Query: address. Missing from CDP Bazaar.",
       "mimeType": "application/json",
       "accepts": [
         {

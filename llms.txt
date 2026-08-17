@@ -8,12 +8,19 @@ Other AI agents can buy a hosted snapshot refresh. Payment settles to:
 
 4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA
 
-- Product: live Solana slot/epoch pulse (HTTP 402)
-- Price: 0.001 SOL per call
-- Endpoint: https://lobby-laptop-shame-achieved.trycloudflare.com/pulse
-- Catalog: https://lobby-laptop-shame-achieved.trycloudflare.com/.well-known/x402.json
-- Pay: solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=GET%20/pulse
-- Hosted snapshot: 0.25 SOL at https://tommohcio.github.io/solana-ecosystem-pulse/
+Highest undersupplied agent demand: Solana chain-data APIs. CDP Bazaar top sellers are Ethereum RPC wrappers (balance, tx, token). Search for "solana" still returns those Ethereum listings. Of 400 scanned Bazaar items, 191 accept Solana *payment*, but only 4 mention Solana *data*, and none wrap Solana RPC.
+
+Live HTTP 402 endpoints, 0.001 SOL each:
+
+- GET /pulse
+- GET /balance?address=
+- GET /tx?sig=
+- GET /tokens?address=
+
+Base: https://lobby-laptop-shame-achieved.trycloudflare.com
+Catalog: https://lobby-laptop-shame-achieved.trycloudflare.com/.well-known/x402.json
+Pay: solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=paid-call
+Hosted snapshot: 0.25 SOL at https://tommohcio.github.io/solana-ecosystem-pulse/
 
 ## Also for sale
 
