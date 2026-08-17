@@ -123,6 +123,7 @@ const ROUTE_PRICE = {
   '/rwme': { usdc: '10000', sol: '10000000' },
   '/gpmd': { usdc: '15000', sol: '15000000' },
   '/vcur': { usdc: '10000', sol: '10000000' },
+  '/nrpc': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -745,6 +746,10 @@ const BAZAAR = {
     count: 0,
     current: [],
   }),
+  '/nrpc': bazaarExtension({}, {
+    count: 0,
+    nodes: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -875,6 +880,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/rwme': 'Live Solana inflation rewards for multiple addresses in a chosen epoch',
         '/gpmd': 'Live Solana program accounts filtered by memcmp with a data slice',
         '/vcur': 'Live Solana current vote accounts with activated stake',
+        '/nrpc': 'Live Solana cluster nodes that expose a public RPC endpoint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1092,7 +1098,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                           ? ['solana', 'program', 'memcmp', 'slice']
                                                                                                                                                                                                                           : path === '/vcur'
                                                                                                                                                                                                                             ? ['solana', 'votes', 'current', 'stake']
-                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                            : path === '/nrpc'
+                                                                                                                                                                                                                              ? ['solana', 'cluster', 'rpc', 'nodes']
+                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2296,6 +2304,27 @@ async function clusterTpuEndpoints() {
       rpc: row.rpc || null,
       version: row.version || null,
       shredVersion: row.shredVersion ?? null,
+    }))
+  return {
+    count: nodes.length,
+    nodes,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function clusterRpcEndpoints() {
+  const res = await rpc('getClusterNodes', [])
+  const nodes = (res.result || [])
+    .filter((row) => Boolean(row.rpc))
+    .slice(0, 16)
+    .map((row) => ({
+      pubkey: row.pubkey,
+      rpc: row.rpc || null,
+      gossip: row.gossip || null,
+      tpu: row.tpu || null,
+      version: row.version || null,
+      shredVersion: row.shredVersion ?? null,
+      featureSet: row.featureSet ?? null,
     }))
   return {
     count: nodes.length,
@@ -4615,6 +4644,10 @@ const PAID = {
     validate() {},
     run: async () => currentVoteAccounts(),
   },
+  '/nrpc': {
+    validate() {},
+    run: async () => clusterRpcEndpoints(),
+  },
 }
 
 function catalogResources() {
@@ -4731,6 +4764,7 @@ function catalogResources() {
     { path: '/rwme', description: 'Live Solana inflation rewards for multiple addresses in a chosen epoch' },
     { path: '/gpmd', description: 'Live Solana program accounts filtered by memcmp with a data slice' },
     { path: '/vcur', description: 'Live Solana current vote accounts with activated stake' },
+    { path: '/nrpc', description: 'Live Solana cluster nodes that expose a public RPC endpoint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4907,6 +4941,7 @@ const server = createServer(async (req, res) => {
               { name: 'inflation_rewards_many_epoch', description: 'Paid Solana inflation rewards for multiple addresses in a chosen epoch. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, epoch: { type: 'string' } }, required: ['addresses', 'epoch'] } },
               { name: 'program_accounts_memcmp_slice', description: 'Paid Solana program accounts filtered by memcmp with a data slice. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slice: { type: 'string' }, length: { type: 'string' } }, required: ['program', 'offset', 'bytes', 'slice', 'length'] } },
               { name: 'current_votes', description: 'Paid Solana current vote accounts with activated stake. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'cluster_rpc_nodes', description: 'Paid Solana cluster nodes that expose a public RPC endpoint. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -5023,6 +5058,7 @@ const server = createServer(async (req, res) => {
         inflation_rewards_many_epoch: '/rwme',
         program_accounts_memcmp_slice: '/gpmd',
         current_votes: '/vcur',
+        cluster_rpc_nodes: '/nrpc',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
