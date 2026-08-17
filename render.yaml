@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: solana-pulse-xaas
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: echo no-build
+    startCommand: node xaas-server.mjs
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+    healthCheckPath: /sample
