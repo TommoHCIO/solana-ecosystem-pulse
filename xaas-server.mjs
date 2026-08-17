@@ -31,6 +31,7 @@ const ROUTE_PRICE = {
   '/fresh': { usdc: '5000', sol: '5000000' },
   '/tz': { usdc: '5000', sol: '5000000' },
   '/units': { usdc: '5000', sol: '5000000' },
+  '/isbn': { usdc: '3000', sol: '3000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -226,6 +227,11 @@ const BAZAAR = {
     to: 'mi',
     result: 0.621371,
   }),
+  '/isbn': bazaarExtension({ isbn: '9780306406157' }, {
+    isbn: '9780306406157',
+    valid: true,
+    isbn13: '9780306406157',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -264,6 +270,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/fresh': 'Timestamped content fingerprint for a public HTTPS URL',
         '/tz': 'Convert a timestamp into any IANA timezone',
         '/units': 'Convert metric and imperial units',
+        '/isbn': 'Validate ISBN-10/13 and convert between formats',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -297,7 +304,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                   ? ['timezone', 'convert', 'iana', 'calendar']
                                   : path === '/units'
                                     ? ['units', 'convert', 'metric', 'imperial']
-                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                    : path === '/isbn'
+                                      ? ['isbn', 'book', 'validate', 'checksum']
+                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -650,6 +659,43 @@ const UNIT_TO_SI = {
   c: { dim: 'temp' },
   f: { dim: 'temp' },
   k: { dim: 'temp' },
+}
+
+function checkIsbn(raw) {
+  const isbn = requireText('isbn', raw).replace(/[-\s]/g, '').toUpperCase()
+  if (!/^\d{9}[\dX]$/.test(isbn) && !/^\d{13}$/.test(isbn)) {
+    const err = new Error('isbn must be ISBN-10 or ISBN-13')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  let valid = false
+  let isbn10 = null
+  let isbn13 = null
+  if (isbn.length === 10) {
+    let sum = 0
+    for (let i = 0; i < 9; i++) sum += Number(isbn[i]) * (10 - i)
+    const check = isbn[9] === 'X' ? 10 : Number(isbn[9])
+    valid = (sum + check) % 11 === 0
+    isbn10 = isbn
+    const core = '978' + isbn.slice(0, 9)
+    let s13 = 0
+    for (let i = 0; i < 12; i++) s13 += Number(core[i]) * (i % 2 === 0 ? 1 : 3)
+    isbn13 = core + String((10 - (s13 % 10)) % 10)
+  } else {
+    let s13 = 0
+    for (let i = 0; i < 12; i++) s13 += Number(isbn[i]) * (i % 2 === 0 ? 1 : 3)
+    valid = Number(isbn[12]) === ((10 - (s13 % 10)) % 10)
+    isbn13 = isbn
+    if (isbn.startsWith('978')) {
+      const core = isbn.slice(3, 12)
+      let sum = 0
+      for (let i = 0; i < 9; i++) sum += Number(core[i]) * (10 - i)
+      const rem = (11 - (sum % 11)) % 11
+      isbn10 = core + (rem === 10 ? 'X' : String(rem))
+    }
+  }
+  return { isbn, valid, isbn10, isbn13, generatedAt: new Date().toISOString() }
 }
 
 function convertUnits(rawValue, fromRaw, toRaw) {
@@ -1044,6 +1090,10 @@ const PAID = {
     validate(url) { convertUnits(url.searchParams.get('value'), url.searchParams.get('from'), url.searchParams.get('to')) },
     run: async (url) => convertUnits(url.searchParams.get('value'), url.searchParams.get('from'), url.searchParams.get('to')),
   },
+  '/isbn': {
+    validate(url) { checkIsbn(url.searchParams.get('isbn')) },
+    run: async (url) => checkIsbn(url.searchParams.get('isbn')),
+  },
 }
 
 function catalogResources() {
@@ -1068,6 +1118,7 @@ function catalogResources() {
     { path: '/fresh', description: 'Timestamped content fingerprint for a public HTTPS URL. Query: url' },
     { path: '/tz', description: 'Convert a timestamp into any IANA timezone. Query: to, optional iso' },
     { path: '/units', description: 'Convert metric and imperial units. Query: value, from, to' },
+    { path: '/isbn', description: 'Validate ISBN-10/13 and convert formats. Query: isbn' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1149,6 +1200,7 @@ const server = createServer(async (req, res) => {
               { name: 'content_fresh', description: 'Paid HTTPS content fingerprint (sha256 + headers). 0.005 USDC.', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
               { name: 'timezone_convert', description: 'Paid IANA timezone convert. 0.005 USDC. Query: to, optional iso.', inputSchema: { type: 'object', properties: { to: { type: 'string' }, iso: { type: 'string' } }, required: ['to'] } },
               { name: 'unit_convert', description: 'Paid metric/imperial unit convert. 0.005 USDC.', inputSchema: { type: 'object', properties: { value: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' } }, required: ['value', 'from', 'to'] } },
+              { name: 'isbn_check', description: 'Paid ISBN-10/13 validate and convert. 0.003 USDC.', inputSchema: { type: 'object', properties: { isbn: { type: 'string' } }, required: ['isbn'] } },
             ],
           },
         })
@@ -1173,6 +1225,7 @@ const server = createServer(async (req, res) => {
         content_fresh: '/fresh',
         timezone_convert: '/tz',
         unit_convert: '/units',
+        isbn_check: '/isbn',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
