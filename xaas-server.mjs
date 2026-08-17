@@ -141,6 +141,7 @@ const ROUTE_PRICE = {
   '/mcsw': { usdc: '10000', sol: '10000000' },
   '/amcs': { usdc: '10000', sol: '10000000' },
   '/msmc': { usdc: '10000', sol: '10000000' },
+  '/asmc': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -896,6 +897,14 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/asmc': bazaarExtension({
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    slot: '439000000',
+    offset: '0',
+    length: '32',
+  }, {
+    found: false,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1044,6 +1053,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/mcsw': 'Live Solana signatures after a minimum context slot between a before cursor and an until cursor',
         '/amcs': 'Live Solana account info after a minimum context slot',
         '/msmc': 'Live Solana multi-account data slices after a minimum context slot',
+        '/asmc': 'Live Solana account data slice after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1297,7 +1307,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                               ? ['solana', 'account', 'slot']
                                                                                                                                                                                                                                                               : path === '/msmc'
                                                                                                                                                                                                                                                                 ? ['solana', 'accounts', 'slice', 'slot']
-                                                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                : path === '/asmc'
+                                                                                                                                                                                                                                                                  ? ['solana', 'account', 'slice', 'slot']
+                                                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -4397,6 +4409,42 @@ async function accountInfoMinContext(addressRaw, slotRaw) {
   }
 }
 
+async function accountDataSliceMinContext(addressRaw, slotRaw, offsetRaw, lengthRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const minContextSlot = parseSlot(slotRaw)
+  const { offset, length } = parseDataSlice(offsetRaw, lengthRaw)
+  const res = await rpc('getAccountInfo', [address, {
+    encoding: 'base64',
+    commitment: 'confirmed',
+    minContextSlot,
+    dataSlice: { offset, length },
+  }])
+  const value = res.result?.value
+  if (!value) {
+    return {
+      address,
+      minContextSlot,
+      offset,
+      length,
+      found: false,
+      generatedAt: new Date().toISOString(),
+    }
+  }
+  return {
+    address,
+    minContextSlot,
+    offset,
+    length,
+    found: true,
+    lamports: value.lamports,
+    owner: value.owner,
+    executable: value.executable,
+    data: Array.isArray(value.data) ? value.data[0] : null,
+    encoding: 'base64',
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function recentSigs(address) {
   const limitRaw = Number(arguments[1] || 10)
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 25) : 10
@@ -5458,6 +5506,19 @@ const PAID = {
       url.searchParams.get('length'),
     ),
   },
+  '/asmc': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+      parseSlot(url.searchParams.get('slot'))
+      parseDataSlice(url.searchParams.get('offset'), url.searchParams.get('length'))
+    },
+    run: async (url) => accountDataSliceMinContext(
+      url.searchParams.get('address'),
+      url.searchParams.get('slot'),
+      url.searchParams.get('offset'),
+      url.searchParams.get('length'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -5592,6 +5653,7 @@ function catalogResources() {
     { path: '/mcsw', description: 'Live Solana signatures after a minimum context slot between a before cursor and an until cursor' },
     { path: '/amcs', description: 'Live Solana account info after a minimum context slot' },
     { path: '/msmc', description: 'Live Solana multi-account data slices after a minimum context slot' },
+    { path: '/asmc', description: 'Live Solana account data slice after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -5786,6 +5848,7 @@ const server = createServer(async (req, res) => {
               { name: 'signatures_min_context_window', description: 'Paid Solana signatures after a minimum context slot between a before cursor and an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' }, before: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'slot', 'before', 'until'] } },
               { name: 'account_info_min_context', description: 'Paid Solana account info after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' } }, required: ['address', 'slot'] } },
               { name: 'multiple_account_slices_min_context', description: 'Paid Solana multi-account data slices after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, slot: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['addresses', 'slot', 'offset', 'length'] } },
+              { name: 'account_data_slice_min_context', description: 'Paid Solana account data slice after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['address', 'slot', 'offset', 'length'] } },
             ],
           },
         })
@@ -5920,6 +5983,7 @@ const server = createServer(async (req, res) => {
         signatures_min_context_window: '/mcsw',
         account_info_min_context: '/amcs',
         multiple_account_slices_min_context: '/msmc',
+        account_data_slice_min_context: '/asmc',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
