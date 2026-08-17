@@ -88,6 +88,7 @@ const ROUTE_PRICE = {
   '/own': { usdc: '10000', sol: '10000000' },
   '/hist': { usdc: '10000', sol: '10000000' },
   '/stk': { usdc: '10000', sol: '10000000' },
+  '/vac': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -557,6 +558,11 @@ const BAZAAR = {
     deactivationEpoch: null,
     lamports: 0,
   }),
+  '/vac': bazaarExtension({ vote: 'Certusm1sa411sMpV9FPqU5dXAYhmmhygvxJ23S6hJ24' }, {
+    commission: 0,
+    activatedStake: 0,
+    delinquent: false,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -652,6 +658,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/own': 'Live Solana SPL token balance for a wallet and mint',
         '/hist': 'Live Solana paginated signatures for an address with a before cursor',
         '/stk': 'Live Solana parsed stake account delegation and authorities',
+        '/vac': 'Live Solana vote-account commission identity and activated stake',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -799,7 +806,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                     ? ['solana', 'signatures', 'history', 'before']
                                                                                                                                                     : path === '/stk'
                                                                                                                                                       ? ['solana', 'stake', 'delegation', 'account']
-                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                      : path === '/vac'
+                                                                                                                                                        ? ['solana', 'vote', 'commission', 'validator']
+                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1611,6 +1620,31 @@ async function voteCounts() {
     current: current.length,
     delinquent: delinquent.length,
     activatedStake: activated,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function voteAccount(voteRaw) {
+  const vote = requirePubkey('vote', voteRaw)
+  const res = await rpc('getVoteAccounts', [{ votePubkey: vote }])
+  const current = res.result?.current || []
+  const delinquent = res.result?.delinquent || []
+  const row = current[0] || delinquent[0]
+  if (!row) {
+    const err = new Error('vote account not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  return {
+    vote,
+    node: row.nodePubkey ?? null,
+    commission: row.commission ?? null,
+    activatedStake: row.activatedStake ?? 0,
+    lastVote: row.lastVote ?? null,
+    rootSlot: row.rootSlot ?? null,
+    epochCredits: Array.isArray(row.epochCredits) ? row.epochCredits.slice(-4) : [],
+    delinquent: !current[0],
     generatedAt: new Date().toISOString(),
   }
 }
@@ -2969,6 +3003,10 @@ const PAID = {
     validate(url) { requirePubkey('stake', url.searchParams.get('stake')) },
     run: async (url) => stakeAccount(url.searchParams.get('stake')),
   },
+  '/vac': {
+    validate(url) { requirePubkey('vote', url.searchParams.get('vote')) },
+    run: async (url) => voteAccount(url.searchParams.get('vote')),
+  },
 }
 
 function catalogResources() {
@@ -3050,6 +3088,7 @@ function catalogResources() {
     { path: '/own', description: 'Live Solana SPL token balance for a wallet and mint' },
     { path: '/hist', description: 'Live Solana paginated signatures for an address with a before cursor' },
     { path: '/stk', description: 'Live Solana parsed stake account delegation and authorities' },
+    { path: '/vac', description: 'Live Solana vote-account commission identity and activated stake' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3188,6 +3227,7 @@ const server = createServer(async (req, res) => {
               { name: 'owner_mint_balance', description: 'Paid Solana SPL token balance for a wallet and mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' } }, required: ['owner', 'mint'] } },
               { name: 'signature_history', description: 'Paid Solana paginated signatures with a before cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, before: { type: 'string' } }, required: ['address'] } },
               { name: 'stake_account', description: 'Paid Solana parsed stake account delegation. 0.01 USDC.', inputSchema: { type: 'object', properties: { stake: { type: 'string' } }, required: ['stake'] } },
+              { name: 'vote_account', description: 'Paid Solana vote-account commission and identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { vote: { type: 'string' } }, required: ['vote'] } },
             ],
           },
         })
@@ -3269,6 +3309,7 @@ const server = createServer(async (req, res) => {
         owner_mint_balance: '/own',
         signature_history: '/hist',
         stake_account: '/stk',
+        vote_account: '/vac',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
