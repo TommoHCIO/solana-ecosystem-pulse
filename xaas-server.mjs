@@ -94,6 +94,7 @@ const ROUTE_PRICE = {
   '/jts': { usdc: '10000', sol: '10000000' },
   '/gpm': { usdc: '15000', sol: '15000000' },
   '/logs': { usdc: '10000', sol: '10000000' },
+  '/pda': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -593,6 +594,11 @@ const BAZAAR = {
     computeUnits: 0,
     logs: [],
   }),
+  '/pda': bazaarExtension({ program: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', seeds: 'metadata' }, {
+    address: '',
+    bump: 255,
+    exists: false,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -694,6 +700,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/jts': 'Live Jupiter token search by name symbol or mint',
         '/gpm': 'Live Solana getProgramAccounts filtered by memcmp',
         '/logs': 'Live Solana transaction program logs compute and error',
+        '/pda': 'Live Solana program derived address and existence',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -853,7 +860,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                                 ? ['solana', 'gpa', 'memcmp', 'filter']
                                                                                                                                                                 : path === '/logs'
                                                                                                                                                                   ? ['solana', 'transaction', 'logs', 'compute']
-                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                  : path === '/pda'
+                                                                                                                                                                    ? ['solana', 'pda', 'derive', 'bump']
+                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1078,6 +1087,65 @@ async function associatedTokenAccount(ownerRaw, mintRaw) {
     lamports: value?.lamports ?? 0,
     ownerMatch: parsed.owner || null,
     amount: parsed.tokenAmount?.uiAmountString || parsed.tokenAmount?.amount || null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function parsePdaSeeds(raw) {
+  if (raw === null || raw === '') {
+    const err = new Error('seeds query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const parts = String(raw).split(',').map((part) => part.trim()).filter(Boolean).slice(0, 4)
+  if (parts.length === 0) {
+    const err = new Error('seeds must list at least one seed')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return parts.map((part) => {
+    if (isPubkey(part)) {
+      const decoded = decodeBase58(part)
+      if (!decoded || decoded.length !== 32) {
+        const err = new Error('seeds public keys must be 32-byte base58')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+      return decoded
+    }
+    if (part.length > 32) {
+      const err = new Error('each seed must be 32 characters or fewer unless it is a public key')
+      err.status = 400
+      err.code = 'invalid_param'
+      throw err
+    }
+    return Buffer.from(part, 'utf8')
+  })
+}
+
+async function programDerivedAddress(programRaw, seedsRaw) {
+  const program = requirePubkey('program', programRaw)
+  const seeds = parsePdaSeeds(seedsRaw)
+  const programBytes = decodeBase58(program)
+  if (!programBytes || programBytes.length !== 32) {
+    const err = new Error('program must be a 32-byte public key')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const derived = findProgramAddress(seeds, programBytes)
+  const info = await rpc('getAccountInfo', [derived.address, { encoding: 'base64', commitment: 'confirmed' }])
+  const value = info.result?.value
+  return {
+    program,
+    address: derived.address,
+    bump: derived.bump,
+    exists: Boolean(value),
+    lamports: value?.lamports ?? 0,
+    owner: value?.owner ?? null,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -3348,6 +3416,13 @@ const PAID = {
     validate(url) { requireSig('sig', url.searchParams.get('sig')) },
     run: async (url) => transactionLogs(url.searchParams.get('sig')),
   },
+  '/pda': {
+    validate(url) {
+      requirePubkey('program', url.searchParams.get('program'))
+      parsePdaSeeds(url.searchParams.get('seeds'))
+    },
+    run: async (url) => programDerivedAddress(url.searchParams.get('program'), url.searchParams.get('seeds')),
+  },
 }
 
 function catalogResources() {
@@ -3435,6 +3510,7 @@ function catalogResources() {
     { path: '/jts', description: 'Live Jupiter token search by name symbol or mint' },
     { path: '/gpm', description: 'Live Solana getProgramAccounts filtered by memcmp' },
     { path: '/logs', description: 'Live Solana transaction program logs compute and error' },
+    { path: '/pda', description: 'Live Solana program derived address and existence' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3579,6 +3655,7 @@ const server = createServer(async (req, res) => {
               { name: 'jupiter_token_search', description: 'Paid Jupiter token search by name symbol or mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
               { name: 'program_accounts_memcmp', description: 'Paid Solana getProgramAccounts filtered by memcmp. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' } }, required: ['program', 'offset', 'bytes'] } },
               { name: 'transaction_logs', description: 'Paid Solana transaction program logs and compute. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
+              { name: 'program_derived_address', description: 'Paid Solana PDA derive and existence check. 0.01 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, seeds: { type: 'string' } }, required: ['program', 'seeds'] } },
             ],
           },
         })
@@ -3666,6 +3743,7 @@ const server = createServer(async (req, res) => {
         jupiter_token_search: '/jts',
         program_accounts_memcmp: '/gpm',
         transaction_logs: '/logs',
+        program_derived_address: '/pda',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
