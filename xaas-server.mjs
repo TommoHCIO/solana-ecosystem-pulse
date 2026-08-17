@@ -21,6 +21,7 @@ const ROUTE_PRICE = {
   '/screen': { usdc: '10000', sol: '10000000' },
   '/risk': { usdc: '20000', sol: '20000000' },
   '/price': { usdc: '5000', sol: '5000000' },
+  '/wallet': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -173,6 +174,11 @@ const BAZAAR = {
     mint: 'So11111111111111111111111111111111111111112',
     usd: 148.2,
   }),
+  '/wallet': bazaarExtension({ address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    sol: 0.008616398,
+    tokenCount: 2,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -203,6 +209,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/screen': 'OFAC SDN screen for a Solana wallet address',
         '/risk': 'Mint/freeze authority and holder-concentration risk for a Solana mint',
         '/price': 'USD price for a Solana mint via Jupiter',
+        '/wallet': 'Native SOL plus token holdings for a Solana wallet',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -220,7 +227,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                   ? ['risk', 'mint', 'solana', 'token']
                   : path === '/price'
                     ? ['price', 'jupiter', 'solana', 'usd']
-                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                    : path === '/wallet'
+                      ? ['wallet', 'portfolio', 'solana', 'holdings']
+                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -532,6 +541,18 @@ async function extractPage(target) {
   }
 }
 
+async function walletSnapshot(address) {
+  const [balance, tokens] = await Promise.all([solBalance(address), solTokens(address)])
+  return {
+    address,
+    sol: balance.sol,
+    lamports: balance.lamports,
+    tokenCount: tokens.count,
+    tokens: tokens.tokens.slice(0, 25),
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function mintPrice(mint) {
   const usdc = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
   const sol = 'So11111111111111111111111111111111111111112'
@@ -690,6 +711,10 @@ const PAID = {
     validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
     run: async (url) => mintPrice(url.searchParams.get('mint')),
   },
+  '/wallet': {
+    validate(url) { requirePubkey('address', url.searchParams.get('address')) },
+    run: async (url) => walletSnapshot(url.searchParams.get('address')),
+  },
 }
 
 function catalogResources() {
@@ -706,6 +731,7 @@ function catalogResources() {
     { path: '/screen', description: 'OFAC SDN screen for a Solana wallet. Query: address' },
     { path: '/risk', description: 'Mint/freeze authority and holder concentration. Query: mint' },
     { path: '/price', description: 'USD price for a Solana mint via Jupiter. Query: mint' },
+    { path: '/wallet', description: 'Native SOL plus token holdings. Query: address' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -779,6 +805,7 @@ const server = createServer(async (req, res) => {
               { name: 'ofac_screen', description: 'Paid OFAC SDN screen for a Solana address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'mint_risk', description: 'Paid Solana mint risk: authorities + holder concentration. 0.02 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'mint_price', description: 'Paid Solana mint USD price via Jupiter. 0.005 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'wallet_holdings', description: 'Paid Solana wallet SOL + token holdings. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
             ],
           },
         })
@@ -795,6 +822,7 @@ const server = createServer(async (req, res) => {
         ofac_screen: '/screen',
         mint_risk: '/risk',
         mint_price: '/price',
+        wallet_holdings: '/wallet',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
