@@ -95,6 +95,7 @@ const ROUTE_PRICE = {
   '/gpm': { usdc: '15000', sol: '15000000' },
   '/logs': { usdc: '10000', sol: '10000000' },
   '/pda': { usdc: '10000', sol: '10000000' },
+  '/curv': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -599,6 +600,10 @@ const BAZAAR = {
     bump: 255,
     exists: false,
   }),
+  '/curv': bazaarExtension({ key: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    onCurve: true,
+    kind: 'keypair',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -701,6 +706,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/gpm': 'Live Solana getProgramAccounts filtered by memcmp',
         '/logs': 'Live Solana transaction program logs compute and error',
         '/pda': 'Live Solana program derived address and existence',
+        '/curv': 'Live Solana pubkey on-curve versus PDA check',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -862,7 +868,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                                   ? ['solana', 'transaction', 'logs', 'compute']
                                                                                                                                                                   : path === '/pda'
                                                                                                                                                                     ? ['solana', 'pda', 'derive', 'bump']
-                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                    : path === '/curv'
+                                                                                                                                                                      ? ['solana', 'pubkey', 'curve', 'pda']
+                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1027,6 +1035,24 @@ function ed25519OnCurve(pubkey) {
   const v = ((d * yy) % p + 1n) % p
   const x2 = (u * modInverse(v, p)) % p
   return modPow(x2, (p - 1n) / 2n, p) !== p - 1n
+}
+
+function pubkeyCurve(keyRaw) {
+  const key = requirePubkey('key', keyRaw)
+  const bytes = decodeBase58(key)
+  if (!bytes || bytes.length !== 32) {
+    const err = new Error('key must be a 32-byte public key')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const onCurve = ed25519OnCurve(bytes)
+  return {
+    key,
+    onCurve,
+    kind: onCurve ? 'keypair' : 'pda-or-offcurve',
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 function modPow(base, exp, mod) {
@@ -3423,6 +3449,10 @@ const PAID = {
     },
     run: async (url) => programDerivedAddress(url.searchParams.get('program'), url.searchParams.get('seeds')),
   },
+  '/curv': {
+    validate(url) { requirePubkey('key', url.searchParams.get('key')) },
+    run: async (url) => pubkeyCurve(url.searchParams.get('key')),
+  },
 }
 
 function catalogResources() {
@@ -3511,6 +3541,7 @@ function catalogResources() {
     { path: '/gpm', description: 'Live Solana getProgramAccounts filtered by memcmp' },
     { path: '/logs', description: 'Live Solana transaction program logs compute and error' },
     { path: '/pda', description: 'Live Solana program derived address and existence' },
+    { path: '/curv', description: 'Live Solana pubkey on-curve versus PDA check' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3656,6 +3687,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_accounts_memcmp', description: 'Paid Solana getProgramAccounts filtered by memcmp. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' } }, required: ['program', 'offset', 'bytes'] } },
               { name: 'transaction_logs', description: 'Paid Solana transaction program logs and compute. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
               { name: 'program_derived_address', description: 'Paid Solana PDA derive and existence check. 0.01 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, seeds: { type: 'string' } }, required: ['program', 'seeds'] } },
+              { name: 'pubkey_curve', description: 'Paid Solana pubkey on-curve versus PDA check. 0.005 USDC.', inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] } },
             ],
           },
         })
@@ -3744,6 +3776,7 @@ const server = createServer(async (req, res) => {
         program_accounts_memcmp: '/gpm',
         transaction_logs: '/logs',
         program_derived_address: '/pda',
+        pubkey_curve: '/curv',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
