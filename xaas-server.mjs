@@ -153,6 +153,7 @@ const ROUTE_PRICE = {
   '/gpsc': { usdc: '15000', sol: '15000000' },
   '/gpms': { usdc: '15000', sol: '15000000' },
   '/tbcs': { usdc: '10000', sol: '10000000' },
+  '/tscs': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1010,6 +1011,13 @@ const BAZAAR = {
     amount: '0',
     decimals: 0,
   }),
+  '/tscs': bazaarExtension({
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    slot: '439000000',
+  }, {
+    amount: '0',
+    decimals: 6,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1170,6 +1178,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/gpsc': 'Live Solana size-filtered program account data slices after a minimum context slot',
         '/gpms': 'Live Solana memcmp-filtered program account data slices after a minimum context slot',
         '/tbcs': 'Live Solana SPL token-account balance after a minimum context slot',
+        '/tscs': 'Live Solana SPL token supply after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1447,7 +1456,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                       ? ['solana', 'rpc', 'memcmp', 'slice']
                                                                                                                                                                                                                                                                                       : path === '/tbcs'
                                                                                                                                                                                                                                                                                         ? ['solana', 'rpc', 'token', 'slot']
-                                                                                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                        : path === '/tscs'
+                                                                                                                                                                                                                                                                                          ? ['solana', 'rpc', 'supply', 'slot']
+                                                                                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -4291,6 +4302,27 @@ async function tokenSupply(mint) {
   }
 }
 
+async function tokenSupplyMinContext(mintRaw, slotRaw) {
+  const mint = requirePubkey('mint', mintRaw)
+  const minContextSlot = parseSlot(slotRaw)
+  const res = await rpc('getTokenSupply', [mint, { minContextSlot }])
+  const value = res.result?.value
+  if (!value) {
+    const err = new Error('mint supply not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  return {
+    mint,
+    minContextSlot,
+    amount: value.amount,
+    decimals: value.decimals,
+    uiAmount: value.uiAmountString || value.uiAmount,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function mintMetadata(mintRaw) {
   const mint = requirePubkey('mint', mintRaw)
   const [supplyRes, accountRes] = await Promise.all([
@@ -6098,6 +6130,16 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/tscs': {
+    validate(url) {
+      requirePubkey('mint', url.searchParams.get('mint'))
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => tokenSupplyMinContext(
+      url.searchParams.get('mint'),
+      url.searchParams.get('slot'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6244,6 +6286,7 @@ function catalogResources() {
     { path: '/gpsc', description: 'Live Solana size-filtered program account data slices after a minimum context slot' },
     { path: '/gpms', description: 'Live Solana memcmp-filtered program account data slices after a minimum context slot' },
     { path: '/tbcs', description: 'Live Solana SPL token-account balance after a minimum context slot' },
+    { path: '/tscs', description: 'Live Solana SPL token supply after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6450,6 +6493,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_account_slices_min_context', description: 'Paid Solana size-filtered program account data slices after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'space', 'offset', 'length', 'slot'] } },
               { name: 'program_accounts_memcmp_slice_min_context', description: 'Paid Solana memcmp-filtered program account data slices after a minimum context slot. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' }, slice: { type: 'string' }, length: { type: 'string' }, slot: { type: 'string' } }, required: ['program', 'offset', 'bytes', 'slice', 'length', 'slot'] } },
               { name: 'token_account_balance_min_context', description: 'Paid Solana SPL token-account balance after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { account: { type: 'string' }, slot: { type: 'string' } }, required: ['account', 'slot'] } },
+              { name: 'token_supply_min_context', description: 'Paid Solana SPL token supply after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' }, slot: { type: 'string' } }, required: ['mint', 'slot'] } },
             ],
           },
         })
@@ -6596,6 +6640,7 @@ const server = createServer(async (req, res) => {
         program_account_slices_min_context: '/gpsc',
         program_accounts_memcmp_slice_min_context: '/gpms',
         token_account_balance_min_context: '/tbcs',
+        token_supply_min_context: '/tscs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
