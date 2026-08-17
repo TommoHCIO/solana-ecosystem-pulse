@@ -51,6 +51,7 @@ const ROUTE_PRICE = {
   '/nid': { usdc: '5000', sol: '5000000' },
   '/ok': { usdc: '5000', sol: '5000000' },
   '/gen': { usdc: '5000', sol: '5000000' },
+  '/epoch': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -334,6 +335,13 @@ const BAZAAR = {
   '/gen': bazaarExtension({}, {
     genesisHash: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d',
   }),
+  '/epoch': bazaarExtension({}, {
+    slotsPerEpoch: 432000,
+    leaderScheduleSlotOffset: 432000,
+    warmup: false,
+    firstNormalEpoch: 0,
+    firstNormalSlot: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -392,6 +400,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/nid': 'Live Solana RPC node identity pubkey',
         '/ok': 'Live Solana RPC getHealth status',
         '/gen': 'Live Solana cluster genesis hash',
+        '/epoch': 'Live Solana epoch schedule parameters',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -465,7 +474,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                           ? ['solana', 'health', 'rpc', 'cluster']
                                                                           : path === '/gen'
                                                                             ? ['solana', 'genesis', 'hash', 'cluster']
-                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                            : path === '/epoch'
+                                                                              ? ['solana', 'epoch', 'schedule', 'slots']
+                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -853,6 +864,19 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function epochSchedule() {
+  const res = await rpc('getEpochSchedule', [])
+  const value = res.result || {}
+  return {
+    slotsPerEpoch: value.slotsPerEpoch,
+    leaderScheduleSlotOffset: value.leaderScheduleSlotOffset,
+    warmup: value.warmup,
+    firstNormalEpoch: value.firstNormalEpoch,
+    firstNormalSlot: value.firstNormalSlot,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function genesisHash() {
   const res = await rpc('getGenesisHash', [])
@@ -1696,6 +1720,10 @@ const PAID = {
     validate() {},
     run: async () => genesisHash(),
   },
+  '/epoch': {
+    validate() {},
+    run: async () => epochSchedule(),
+  },
 }
 
 function catalogResources() {
@@ -1740,6 +1768,7 @@ function catalogResources() {
     { path: '/nid', description: 'Live Solana RPC node identity pubkey' },
     { path: '/ok', description: 'Live Solana RPC getHealth status' },
     { path: '/gen', description: 'Live Solana cluster genesis hash' },
+    { path: '/epoch', description: 'Live Solana epoch schedule parameters' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1841,6 +1870,7 @@ const server = createServer(async (req, res) => {
               { name: 'node_identity', description: 'Paid Solana RPC node identity. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'rpc_health', description: 'Paid Solana RPC getHealth status. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'genesis_hash', description: 'Paid Solana cluster genesis hash. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'epoch_schedule', description: 'Paid Solana epoch schedule. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1885,6 +1915,7 @@ const server = createServer(async (req, res) => {
         node_identity: '/nid',
         rpc_health: '/ok',
         genesis_hash: '/gen',
+        epoch_schedule: '/epoch',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
