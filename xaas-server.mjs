@@ -43,6 +43,7 @@ const ROUTE_PRICE = {
   '/rent': { usdc: '10000', sol: '10000000' },
   '/inflation': { usdc: '10000', sol: '10000000' },
   '/circ': { usdc: '10000', sol: '10000000' },
+  '/votes': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -295,6 +296,10 @@ const BAZAAR = {
     total: 580000000,
     nonCirculating: 80000000,
   }),
+  '/votes': bazaarExtension({}, {
+    current: 900,
+    delinquent: 20,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -345,6 +350,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/rent': 'Minimum lamports for rent exemption by account size',
         '/inflation': 'Current Solana inflation rate',
         '/circ': 'Native SOL circulating and total supply',
+        '/votes': 'Current and delinquent Solana vote-account counts',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -402,7 +408,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                           ? ['solana', 'inflation', 'staking', 'epoch']
                                                           : path === '/circ'
                                                             ? ['solana', 'circulating', 'supply', 'native']
-                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                            : path === '/votes'
+                                                              ? ['solana', 'validators', 'votes', 'stake']
+                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -790,6 +798,19 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function voteCounts() {
+  const res = await rpc('getVoteAccounts', [])
+  const current = res.result?.current || []
+  const delinquent = res.result?.delinquent || []
+  const activated = current.reduce((sum, row) => sum + Number(row.activatedStake || 0), 0)
+  return {
+    current: current.length,
+    delinquent: delinquent.length,
+    activatedStake: activated,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function circulatingSupply() {
   const res = await rpc('getSupply', [{ commitment: 'confirmed' }])
@@ -1506,6 +1527,10 @@ const PAID = {
     validate() {},
     run: async () => circulatingSupply(),
   },
+  '/votes': {
+    validate() {},
+    run: async () => voteCounts(),
+  },
 }
 
 function catalogResources() {
@@ -1542,6 +1567,7 @@ function catalogResources() {
     { path: '/rent', description: 'Minimum lamports for rent exemption. Query: space' },
     { path: '/inflation', description: 'Current Solana inflation rate' },
     { path: '/circ', description: 'Native SOL circulating and total supply' },
+    { path: '/votes', description: 'Current and delinquent Solana vote-account counts' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1635,6 +1661,7 @@ const server = createServer(async (req, res) => {
               { name: 'rent_exempt', description: 'Paid rent-exemption lamports by account size. 0.01 USDC.', inputSchema: { type: 'object', properties: { space: { type: 'string' } }, required: ['space'] } },
               { name: 'inflation_rate', description: 'Paid Solana inflation rate. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'circulating_supply', description: 'Paid native SOL circulating supply. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'vote_counts', description: 'Paid Solana vote-account counts. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1671,6 +1698,7 @@ const server = createServer(async (req, res) => {
         rent_exempt: '/rent',
         inflation_rate: '/inflation',
         circulating_supply: '/circ',
+        vote_counts: '/votes',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
