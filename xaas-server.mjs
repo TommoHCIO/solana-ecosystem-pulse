@@ -96,6 +96,7 @@ const ROUTE_PRICE = {
   '/logs': { usdc: '10000', sol: '10000000' },
   '/pda': { usdc: '10000', sol: '10000000' },
   '/curv': { usdc: '5000', sol: '5000000' },
+  '/cpi': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -604,6 +605,10 @@ const BAZAAR = {
     onCurve: true,
     kind: 'keypair',
   }),
+  '/cpi': bazaarExtension({ sig: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW' }, {
+    err: null,
+    inner: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -707,6 +712,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/logs': 'Live Solana transaction program logs compute and error',
         '/pda': 'Live Solana program derived address and existence',
         '/curv': 'Live Solana pubkey on-curve versus PDA check',
+        '/cpi': 'Live Solana parsed inner CPI instructions for a signature',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -870,7 +876,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                                     ? ['solana', 'pda', 'derive', 'bump']
                                                                                                                                                                     : path === '/curv'
                                                                                                                                                                       ? ['solana', 'pubkey', 'curve', 'pda']
-                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                      : path === '/cpi'
+                                                                                                                                                                        ? ['solana', 'transaction', 'cpi', 'inner']
+                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1405,6 +1413,42 @@ async function transactionLogs(sigRaw) {
     computeUnits: meta.computeUnitsConsumed ?? null,
     logCount: Array.isArray(meta.logMessages) ? meta.logMessages.length : 0,
     logs,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function transactionInnerInstructions(sigRaw) {
+  const sig = requireSig('sig', sigRaw)
+  const tx = await rpc('getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }])
+  if (!tx.result) {
+    const err = new Error('transaction not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const meta = tx.result.meta || {}
+  const groups = Array.isArray(meta.innerInstructions) ? meta.innerInstructions : []
+  const inner = []
+  for (const group of groups) {
+    const instructions = Array.isArray(group.instructions) ? group.instructions : []
+    for (const ix of instructions) {
+      if (inner.length >= 16) break
+      const parsed = ix.parsed || {}
+      inner.push({
+        index: group.index ?? null,
+        program: ix.programId || ix.program || null,
+        type: parsed.type || ix.program || 'raw',
+        accounts: Array.isArray(ix.accounts) ? ix.accounts.slice(0, 4) : [],
+      })
+    }
+    if (inner.length >= 16) break
+  }
+  return {
+    sig,
+    slot: tx.result.slot ?? null,
+    err: meta.err ?? null,
+    innerCount: groups.reduce((sum, group) => sum + (Array.isArray(group.instructions) ? group.instructions.length : 0), 0),
+    inner,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -3453,6 +3497,10 @@ const PAID = {
     validate(url) { requirePubkey('key', url.searchParams.get('key')) },
     run: async (url) => pubkeyCurve(url.searchParams.get('key')),
   },
+  '/cpi': {
+    validate(url) { requireSig('sig', url.searchParams.get('sig')) },
+    run: async (url) => transactionInnerInstructions(url.searchParams.get('sig')),
+  },
 }
 
 function catalogResources() {
@@ -3542,6 +3590,7 @@ function catalogResources() {
     { path: '/logs', description: 'Live Solana transaction program logs compute and error' },
     { path: '/pda', description: 'Live Solana program derived address and existence' },
     { path: '/curv', description: 'Live Solana pubkey on-curve versus PDA check' },
+    { path: '/cpi', description: 'Live Solana parsed inner CPI instructions for a signature' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3688,6 +3737,7 @@ const server = createServer(async (req, res) => {
               { name: 'transaction_logs', description: 'Paid Solana transaction program logs and compute. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
               { name: 'program_derived_address', description: 'Paid Solana PDA derive and existence check. 0.01 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, seeds: { type: 'string' } }, required: ['program', 'seeds'] } },
               { name: 'pubkey_curve', description: 'Paid Solana pubkey on-curve versus PDA check. 0.005 USDC.', inputSchema: { type: 'object', properties: { key: { type: 'string' } }, required: ['key'] } },
+              { name: 'inner_instructions', description: 'Paid Solana parsed inner CPI instructions. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
             ],
           },
         })
@@ -3777,6 +3827,7 @@ const server = createServer(async (req, res) => {
         transaction_logs: '/logs',
         program_derived_address: '/pda',
         pubkey_curve: '/curv',
+        inner_instructions: '/cpi',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
