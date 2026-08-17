@@ -82,6 +82,7 @@ const ROUTE_PRICE = {
   '/gpa': { usdc: '15000', sol: '15000000' },
   '/ffm': { usdc: '10000', sol: '10000000' },
   '/sim': { usdc: '15000', sol: '15000000' },
+  '/nce': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -520,6 +521,11 @@ const BAZAAR = {
     units: 0,
     logs: [],
   }),
+  '/nce': bazaarExtension({ nonce: '11111111111111111111111111111111' }, {
+    authority: '',
+    blockhash: '',
+    feeCalculator: null,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -609,6 +615,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/gpa': 'Live Solana size-filtered program accounts',
         '/ffm': 'Live Solana fee for a serialized transaction message',
         '/sim': 'Live Solana simulateTransaction preflight for a signed transaction',
+        '/nce': 'Live Solana durable nonce account metadata',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -744,7 +751,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                         ? ['solana', 'fee', 'message', 'lamports']
                                                                                                                                         : path === '/sim'
                                                                                                                                           ? ['solana', 'simulate', 'transaction', 'preflight']
-                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                          : path === '/nce'
+                                                                                                                                            ? ['solana', 'nonce', 'durable', 'account']
+                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2228,6 +2237,28 @@ async function addressLookupTable(tableRaw) {
   }
 }
 
+async function nonceAccount(nonceRaw) {
+  const nonce = requirePubkey('nonce', nonceRaw)
+  const res = await rpc('getAccountInfo', [nonce, { encoding: 'jsonParsed', commitment: 'confirmed' }])
+  const value = res.result?.value
+  if (!value) {
+    const err = new Error('nonce account not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const info = value.data?.parsed?.info || {}
+  return {
+    nonce,
+    owner: value.owner,
+    lamports: value.lamports,
+    authority: info.authority ?? null,
+    blockhash: info.blockhash ?? null,
+    feeCalculator: info.feeCalculator ?? null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function accountInfo(address) {
   const res = await rpc('getAccountInfo', [address, { encoding: 'jsonParsed', commitment: 'confirmed' }])
   const value = res.result?.value
@@ -2685,6 +2716,10 @@ const PAID = {
     validate(url) { parseTx(url.searchParams.get('tx')) },
     run: async (url) => simulateTx(url.searchParams.get('tx')),
   },
+  '/nce': {
+    validate(url) { requirePubkey('nonce', url.searchParams.get('nonce')) },
+    run: async (url) => nonceAccount(url.searchParams.get('nonce')),
+  },
 }
 
 function catalogResources() {
@@ -2760,6 +2795,7 @@ function catalogResources() {
     { path: '/gpa', description: 'Live Solana size-filtered program accounts' },
     { path: '/ffm', description: 'Live Solana fee for a serialized transaction message' },
     { path: '/sim', description: 'Live Solana simulateTransaction preflight for a signed transaction' },
+    { path: '/nce', description: 'Live Solana durable nonce account metadata' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2892,6 +2928,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_accounts', description: 'Paid Solana getProgramAccounts filtered by dataSize. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' } }, required: ['program', 'space'] } },
               { name: 'fee_for_message', description: 'Paid Solana getFeeForMessage for a serialized message. 0.01 USDC.', inputSchema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] } },
               { name: 'simulate_transaction', description: 'Paid Solana simulateTransaction preflight. 0.015 USDC.', inputSchema: { type: 'object', properties: { tx: { type: 'string' } }, required: ['tx'] } },
+              { name: 'nonce_account', description: 'Paid Solana durable nonce account metadata. 0.01 USDC.', inputSchema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } },
             ],
           },
         })
@@ -2967,6 +3004,7 @@ const server = createServer(async (req, res) => {
         program_accounts: '/gpa',
         fee_for_message: '/ffm',
         simulate_transaction: '/sim',
+        nonce_account: '/nce',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
