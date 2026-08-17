@@ -44,6 +44,7 @@ const ROUTE_PRICE = {
   '/inflation': { usdc: '10000', sol: '10000000' },
   '/circ': { usdc: '10000', sol: '10000000' },
   '/votes': { usdc: '10000', sol: '10000000' },
+  '/whales': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -300,6 +301,10 @@ const BAZAAR = {
     current: 900,
     delinquent: 20,
   }),
+  '/whales': bazaarExtension({}, {
+    count: 20,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -351,6 +356,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/inflation': 'Current Solana inflation rate',
         '/circ': 'Native SOL circulating and total supply',
         '/votes': 'Current and delinquent Solana vote-account counts',
+        '/whales': 'Largest native SOL accounts',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -410,7 +416,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                             ? ['solana', 'circulating', 'supply', 'native']
                                                             : path === '/votes'
                                                               ? ['solana', 'validators', 'votes', 'stake']
-                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                              : path === '/whales'
+                                                                ? ['solana', 'whales', 'largest', 'accounts']
+                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -798,6 +806,16 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function largestAccounts() {
+  const res = await rpc('getLargestAccounts', [])
+  const accounts = (res.result?.value || []).slice(0, 20).map((row) => ({
+    address: row.address,
+    lamports: row.lamports,
+    sol: Number((row.lamports / 1e9).toFixed(9)),
+  }))
+  return { count: accounts.length, accounts, generatedAt: new Date().toISOString() }
+}
 
 async function voteCounts() {
   const res = await rpc('getVoteAccounts', [])
@@ -1531,6 +1549,10 @@ const PAID = {
     validate() {},
     run: async () => voteCounts(),
   },
+  '/whales': {
+    validate() {},
+    run: async () => largestAccounts(),
+  },
 }
 
 function catalogResources() {
@@ -1568,6 +1590,7 @@ function catalogResources() {
     { path: '/inflation', description: 'Current Solana inflation rate' },
     { path: '/circ', description: 'Native SOL circulating and total supply' },
     { path: '/votes', description: 'Current and delinquent Solana vote-account counts' },
+    { path: '/whales', description: 'Largest native SOL accounts' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1662,6 +1685,7 @@ const server = createServer(async (req, res) => {
               { name: 'inflation_rate', description: 'Paid Solana inflation rate. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'circulating_supply', description: 'Paid native SOL circulating supply. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'vote_counts', description: 'Paid Solana vote-account counts. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'largest_accounts', description: 'Paid largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1699,6 +1723,7 @@ const server = createServer(async (req, res) => {
         inflation_rate: '/inflation',
         circulating_supply: '/circ',
         vote_counts: '/votes',
+        largest_accounts: '/whales',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
