@@ -3,7 +3,7 @@
   "name": "io.github.TommoHCIO/solana-pulse-xaas",
   "description": "Solana Jupiter quotes and package preflight for AI agents. Free sample. Paid x402 on Solana USDC.",
   "title": "Solana Pulse XaaS",
-  "version": "0.26.0",
+  "version": "0.26.1",
   "remotes": [
     {
       "type": "streamable-http",
