@@ -78,6 +78,7 @@ const ROUTE_PRICE = {
   '/smin': { usdc: '5000', sol: '5000000' },
   '/mls': { usdc: '5000', sol: '5000000' },
   '/delg': { usdc: '10000', sol: '10000000' },
+  '/alt': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -493,6 +494,14 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/alt': bazaarExtension({ table: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    table: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    authority: '',
+    deactivationSlot: '0',
+    lastExtendedSlot: 0,
+    addressCount: 0,
+    addresses: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -578,6 +587,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/smin': 'Live Solana cluster minimum stake delegation',
         '/mls': 'Live Solana lowest slot still in this node ledger',
         '/delg': 'Live Solana SPL token accounts by approved delegate',
+        '/alt': 'Live Solana address lookup table metadata',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -705,7 +715,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                 ? ['solana', 'ledger', 'minimum', 'slot']
                                                                                                                                 : path === '/delg'
                                                                                                                                   ? ['solana', 'token', 'delegate', 'accounts']
-                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                  : path === '/alt'
+                                                                                                                                    ? ['solana', 'lookup', 'table', 'alt']
+                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2083,6 +2095,30 @@ async function tokenHolders(mint) {
   return { mint, count: holders.length, holders, generatedAt: new Date().toISOString() }
 }
 
+async function addressLookupTable(tableRaw) {
+  const table = requirePubkey('table', tableRaw)
+  const res = await rpc('getAccountInfo', [table, { encoding: 'jsonParsed', commitment: 'confirmed' }])
+  const value = res.result?.value
+  if (!value) {
+    const err = new Error('lookup table not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const info = value.data?.parsed?.info || {}
+  const addresses = Array.isArray(info.addresses) ? info.addresses.slice(0, 32) : []
+  return {
+    table,
+    authority: info.authority ?? null,
+    deactivationSlot: info.deactivationSlot ?? null,
+    lastExtendedSlot: info.lastExtendedSlot ?? null,
+    lastExtendedSlotStartIndex: info.lastExtendedSlotStartIndex ?? null,
+    addressCount: Array.isArray(info.addresses) ? info.addresses.length : 0,
+    addresses,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function accountInfo(address) {
   const res = await rpc('getAccountInfo', [address, { encoding: 'jsonParsed', commitment: 'confirmed' }])
   const value = res.result?.value
@@ -2521,6 +2557,10 @@ const PAID = {
     validate(url) { requirePubkey('delegate', url.searchParams.get('delegate')) },
     run: async (url) => tokenAccountsByDelegate(url.searchParams.get('delegate')),
   },
+  '/alt': {
+    validate(url) { requirePubkey('table', url.searchParams.get('table')) },
+    run: async (url) => addressLookupTable(url.searchParams.get('table')),
+  },
 }
 
 function catalogResources() {
@@ -2592,6 +2632,7 @@ function catalogResources() {
     { path: '/smin', description: 'Live Solana cluster minimum stake delegation' },
     { path: '/mls', description: 'Live Solana lowest slot still in this node ledger' },
     { path: '/delg', description: 'Live Solana SPL token accounts by approved delegate' },
+    { path: '/alt', description: 'Live Solana address lookup table metadata' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2720,6 +2761,7 @@ const server = createServer(async (req, res) => {
               { name: 'stake_minimum', description: 'Paid Solana getStakeMinimumDelegation. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'minimum_ledger_slot', description: 'Paid Solana minimumLedgerSlot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'token_accounts_by_delegate', description: 'Paid Solana getTokenAccountsByDelegate. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' } }, required: ['delegate'] } },
+              { name: 'address_lookup_table', description: 'Paid Solana address lookup table metadata. 0.01 USDC.', inputSchema: { type: 'object', properties: { table: { type: 'string' } }, required: ['table'] } },
             ],
           },
         })
@@ -2791,6 +2833,7 @@ const server = createServer(async (req, res) => {
         stake_minimum: '/smin',
         minimum_ledger_slot: '/mls',
         token_accounts_by_delegate: '/delg',
+        address_lookup_table: '/alt',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
