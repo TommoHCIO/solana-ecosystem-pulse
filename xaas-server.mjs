@@ -131,6 +131,7 @@ const ROUTE_PRICE = {
   '/delm': { usdc: '10000', sol: '10000000' },
   '/delp': { usdc: '10000', sol: '10000000' },
   '/blka': { usdc: '10000', sol: '10000000' },
+  '/mcsu': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -803,6 +804,14 @@ const BAZAAR = {
     count: 0,
     transactions: [],
   }),
+  '/mcsu': bazaarExtension({
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    slot: '439000000',
+    until: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW',
+  }, {
+    count: 0,
+    signatures: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -941,6 +950,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/delm': 'Live Solana token accounts by approved delegate filtered by mint',
         '/delp': 'Live Solana token accounts by approved delegate filtered by one token program',
         '/blka': 'Live Solana block transaction account keys for a slot',
+        '/mcsu': 'Live Solana signatures after a minimum context slot stopped at an until cursor',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1174,7 +1184,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                           ? ['solana', 'tokens', 'delegate', 'program']
                                                                                                                                                                                                                                           : path === '/blka'
                                                                                                                                                                                                                                             ? ['solana', 'block', 'accounts', 'keys']
-                                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                            : path === '/mcsu'
+                                                                                                                                                                                                                                              ? ['solana', 'signatures', 'slot', 'until']
+                                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -4184,6 +4196,28 @@ async function signaturesMinContextSlot(addressRaw, slotRaw) {
   }
 }
 
+async function signaturesMinContextUntil(addressRaw, slotRaw, untilRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const minContextSlot = parseSlot(slotRaw)
+  const until = requireSig('until', untilRaw)
+  const res = await rpc('getSignaturesForAddress', [address, { limit: 20, minContextSlot, until }])
+  const rows = (res.result || []).map((item) => ({
+    signature: item.signature,
+    slot: item.slot,
+    err: item.err || null,
+    iso: item.blockTime ? new Date(item.blockTime * 1000).toISOString() : null,
+  }))
+  return {
+    address,
+    minContextSlot,
+    until,
+    count: rows.length,
+    next: rows.length ? rows[rows.length - 1].signature : null,
+    signatures: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function walletSnapshot(address) {
   const [balance, tokens] = await Promise.all([solBalance(address), solTokens(address)])
   return {
@@ -4958,6 +4992,18 @@ const PAID = {
     validate(url) { parseSlot(url.searchParams.get('slot')) },
     run: async (url) => blockAccountKeys(url.searchParams.get('slot')),
   },
+  '/mcsu': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+      parseSlot(url.searchParams.get('slot'))
+      requireSig('until', url.searchParams.get('until'))
+    },
+    run: async (url) => signaturesMinContextUntil(
+      url.searchParams.get('address'),
+      url.searchParams.get('slot'),
+      url.searchParams.get('until'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -5082,6 +5128,7 @@ function catalogResources() {
     { path: '/delm', description: 'Live Solana token accounts by approved delegate filtered by mint' },
     { path: '/delp', description: 'Live Solana token accounts by approved delegate filtered by one token program' },
     { path: '/blka', description: 'Live Solana block transaction account keys for a slot' },
+    { path: '/mcsu', description: 'Live Solana signatures after a minimum context slot stopped at an until cursor' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -5266,6 +5313,7 @@ const server = createServer(async (req, res) => {
               { name: 'token_accounts_delegate_mint', description: 'Paid Solana token accounts by approved delegate filtered by mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' }, mint: { type: 'string' } }, required: ['delegate', 'mint'] } },
               { name: 'token_accounts_delegate_program', description: 'Paid Solana token accounts by approved delegate filtered by one token program. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' }, program: { type: 'string' } }, required: ['delegate', 'program'] } },
               { name: 'block_account_keys', description: 'Paid Solana block transaction account keys for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'signatures_min_context_until', description: 'Paid Solana signatures after a minimum context slot stopped at an until cursor. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' }, until: { type: 'string' } }, required: ['address', 'slot', 'until'] } },
             ],
           },
         })
@@ -5390,6 +5438,7 @@ const server = createServer(async (req, res) => {
         token_accounts_delegate_mint: '/delm',
         token_accounts_delegate_program: '/delp',
         block_account_keys: '/blka',
+        signatures_min_context_until: '/mcsu',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
