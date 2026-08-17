@@ -143,6 +143,7 @@ const ROUTE_PRICE = {
   '/msmc': { usdc: '10000', sol: '10000000' },
   '/asmc': { usdc: '10000', sol: '10000000' },
   '/bmcs': { usdc: '10000', sol: '10000000' },
+  '/omcs': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -913,6 +914,14 @@ const BAZAAR = {
     lamports: 0,
     sol: 0,
   }),
+  '/omcs': bazaarExtension({
+    owner: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    slot: '439000000',
+  }, {
+    amount: '0',
+    accounts: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1063,6 +1072,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/msmc': 'Live Solana multi-account data slices after a minimum context slot',
         '/asmc': 'Live Solana account data slice after a minimum context slot',
         '/bmcs': 'Live Solana native balance after a minimum context slot',
+        '/omcs': 'Live Solana token accounts for a wallet and mint after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1320,7 +1330,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                   ? ['solana', 'account', 'slice', 'slot']
                                                                                                                                                                                                                                                                   : path === '/bmcs'
                                                                                                                                                                                                                                                                     ? ['solana', 'balance', 'slot']
-                                                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                    : path === '/omcs'
+                                                                                                                                                                                                                                                                      ? ['solana', 'tokens', 'owner', 'slot']
+                                                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2205,6 +2217,33 @@ async function tokenBalanceByOwnerMint(ownerRaw, mintRaw) {
   return {
     owner,
     mint,
+    amount: String(amount),
+    accounts: rows.length,
+    holdings: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function tokenBalanceByOwnerMintMinContext(ownerRaw, mintRaw, slotRaw) {
+  const owner = requirePubkey('owner', ownerRaw)
+  const mint = requirePubkey('mint', mintRaw)
+  const minContextSlot = parseSlot(slotRaw)
+  const token = await rpc('getTokenAccountsByOwner', [
+    owner,
+    { mint },
+    { encoding: 'jsonParsed', minContextSlot },
+  ])
+  const rows = (token.result?.value ?? []).slice(0, 8).map((item) => ({
+    account: item.pubkey,
+    amount: item.account.data.parsed?.info?.tokenAmount?.uiAmountString ?? '0',
+    decimals: item.account.data.parsed?.info?.tokenAmount?.decimals ?? null,
+    program: item.account.owner,
+  }))
+  const amount = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+  return {
+    owner,
+    mint,
+    minContextSlot,
     amount: String(amount),
     accounts: rows.length,
     holdings: rows,
@@ -5555,6 +5594,18 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/omcs': {
+    validate(url) {
+      requirePubkey('owner', url.searchParams.get('owner'))
+      requirePubkey('mint', url.searchParams.get('mint'))
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => tokenBalanceByOwnerMintMinContext(
+      url.searchParams.get('owner'),
+      url.searchParams.get('mint'),
+      url.searchParams.get('slot'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -5691,6 +5742,7 @@ function catalogResources() {
     { path: '/msmc', description: 'Live Solana multi-account data slices after a minimum context slot' },
     { path: '/asmc', description: 'Live Solana account data slice after a minimum context slot' },
     { path: '/bmcs', description: 'Live Solana native balance after a minimum context slot' },
+    { path: '/omcs', description: 'Live Solana token accounts for a wallet and mint after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -5887,6 +5939,7 @@ const server = createServer(async (req, res) => {
               { name: 'multiple_account_slices_min_context', description: 'Paid Solana multi-account data slices after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, slot: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['addresses', 'slot', 'offset', 'length'] } },
               { name: 'account_data_slice_min_context', description: 'Paid Solana account data slice after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['address', 'slot', 'offset', 'length'] } },
               { name: 'native_balance_min_context', description: 'Paid Solana native balance after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, slot: { type: 'string' } }, required: ['address', 'slot'] } },
+              { name: 'token_accounts_owner_mint_min_context', description: 'Paid Solana token accounts for a wallet and mint after a minimum context slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' }, slot: { type: 'string' } }, required: ['owner', 'mint', 'slot'] } },
             ],
           },
         })
@@ -6023,6 +6076,7 @@ const server = createServer(async (req, res) => {
         multiple_account_slices_min_context: '/msmc',
         account_data_slice_min_context: '/asmc',
         native_balance_min_context: '/bmcs',
+        token_accounts_owner_mint_min_context: '/omcs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
