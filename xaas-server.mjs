@@ -77,6 +77,7 @@ const ROUTE_PRICE = {
   '/blim': { usdc: '5000', sol: '5000000' },
   '/smin': { usdc: '5000', sol: '5000000' },
   '/mls': { usdc: '5000', sol: '5000000' },
+  '/delg': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -487,6 +488,11 @@ const BAZAAR = {
   '/mls': bazaarExtension({}, {
     slot: 0,
   }),
+  '/delg': bazaarExtension({ delegate: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA' }, {
+    delegate: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -571,6 +577,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/blim': 'Live Solana confirmed block slots from a start slot',
         '/smin': 'Live Solana cluster minimum stake delegation',
         '/mls': 'Live Solana lowest slot still in this node ledger',
+        '/delg': 'Live Solana SPL token accounts by approved delegate',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -696,7 +703,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                               ? ['solana', 'stake', 'minimum', 'delegation']
                                                                                                                               : path === '/mls'
                                                                                                                                 ? ['solana', 'ledger', 'minimum', 'slot']
-                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                : path === '/delg'
+                                                                                                                                  ? ['solana', 'token', 'delegate', 'accounts']
+                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -944,6 +953,33 @@ async function solTx(sig) {
     throw err
   }
   return { sig, found: true, tx: tx.result, generatedAt: new Date().toISOString() }
+}
+
+async function tokenAccountsByDelegate(delegateRaw) {
+  const delegate = requirePubkey('delegate', delegateRaw)
+  const token = await rpc('getTokenAccountsByDelegate', [
+    delegate,
+    { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
+    { encoding: 'jsonParsed' },
+  ])
+  const token2022 = await rpc('getTokenAccountsByDelegate', [
+    delegate,
+    { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' },
+    { encoding: 'jsonParsed' },
+  ])
+  const rows = [...(token.result?.value ?? []), ...(token2022.result?.value ?? [])].slice(0, 20).map((item) => ({
+    pubkey: item.pubkey,
+    mint: item.account.data.parsed?.info?.mint,
+    amount: item.account.data.parsed?.info?.tokenAmount?.uiAmountString,
+    owner: item.account.data.parsed?.info?.owner,
+    program: item.account.owner,
+  }))
+  return {
+    delegate,
+    count: rows.length,
+    accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 async function solTokens(address) {
@@ -2481,6 +2517,10 @@ const PAID = {
     validate() {},
     run: async () => minimumLedgerSlot(),
   },
+  '/delg': {
+    validate(url) { requirePubkey('delegate', url.searchParams.get('delegate')) },
+    run: async (url) => tokenAccountsByDelegate(url.searchParams.get('delegate')),
+  },
 }
 
 function catalogResources() {
@@ -2551,6 +2591,7 @@ function catalogResources() {
     { path: '/blim', description: 'Live Solana confirmed block slots from a start slot' },
     { path: '/smin', description: 'Live Solana cluster minimum stake delegation' },
     { path: '/mls', description: 'Live Solana lowest slot still in this node ledger' },
+    { path: '/delg', description: 'Live Solana SPL token accounts by approved delegate' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2678,6 +2719,7 @@ const server = createServer(async (req, res) => {
               { name: 'blocks_with_limit', description: 'Paid Solana getBlocksWithLimit from a start slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { start: { type: 'string' }, limit: { type: 'string' } }, required: ['start'] } },
               { name: 'stake_minimum', description: 'Paid Solana getStakeMinimumDelegation. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'minimum_ledger_slot', description: 'Paid Solana minimumLedgerSlot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'token_accounts_by_delegate', description: 'Paid Solana getTokenAccountsByDelegate. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' } }, required: ['delegate'] } },
             ],
           },
         })
@@ -2748,6 +2790,7 @@ const server = createServer(async (req, res) => {
         blocks_with_limit: '/blim',
         stake_minimum: '/smin',
         minimum_ledger_slot: '/mls',
+        token_accounts_by_delegate: '/delg',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
