@@ -45,6 +45,7 @@ const ROUTE_PRICE = {
   '/circ': { usdc: '10000', sol: '10000000' },
   '/votes': { usdc: '10000', sol: '10000000' },
   '/whales': { usdc: '15000', sol: '15000000' },
+  '/blocks': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -305,6 +306,11 @@ const BAZAAR = {
     count: 20,
     accounts: [],
   }),
+  '/blocks': bazaarExtension({}, {
+    slotIndex: 432000,
+    slotsInEpoch: 432000,
+    skipRate: 0.02,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -357,6 +363,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/circ': 'Native SOL circulating and total supply',
         '/votes': 'Current and delinquent Solana vote-account counts',
         '/whales': 'Largest native SOL accounts',
+        '/blocks': 'Current-epoch Solana block production skip rate',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -418,7 +425,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                               ? ['solana', 'validators', 'votes', 'stake']
                                                               : path === '/whales'
                                                                 ? ['solana', 'whales', 'largest', 'accounts']
-                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                : path === '/blocks'
+                                                                  ? ['solana', 'blocks', 'skip-rate', 'epoch']
+                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -806,6 +815,31 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function blockProduction() {
+  const res = await rpc('getBlockProduction', [])
+  const value = res.result?.value || {}
+  const range = value.range || {}
+  const byIdentity = value.byIdentity || {}
+  let leaderSlots = 0
+  let blocksProduced = 0
+  for (const row of Object.values(byIdentity)) {
+    if (Array.isArray(row) && row.length >= 2) {
+      leaderSlots += Number(row[0] || 0)
+      blocksProduced += Number(row[1] || 0)
+    }
+  }
+  const skipped = Math.max(0, leaderSlots - blocksProduced)
+  return {
+    firstSlot: range.firstSlot,
+    lastSlot: range.lastSlot,
+    leaderSlots,
+    blocksProduced,
+    skipped,
+    skipRate: leaderSlots ? Number((skipped / leaderSlots).toFixed(6)) : 0,
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function largestAccounts() {
   const res = await rpc('getLargestAccounts', [])
@@ -1553,6 +1587,10 @@ const PAID = {
     validate() {},
     run: async () => largestAccounts(),
   },
+  '/blocks': {
+    validate() {},
+    run: async () => blockProduction(),
+  },
 }
 
 function catalogResources() {
@@ -1591,6 +1629,7 @@ function catalogResources() {
     { path: '/circ', description: 'Native SOL circulating and total supply' },
     { path: '/votes', description: 'Current and delinquent Solana vote-account counts' },
     { path: '/whales', description: 'Largest native SOL accounts' },
+    { path: '/blocks', description: 'Current-epoch Solana block production skip rate' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1686,6 +1725,7 @@ const server = createServer(async (req, res) => {
               { name: 'circulating_supply', description: 'Paid native SOL circulating supply. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'vote_counts', description: 'Paid Solana vote-account counts. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'largest_accounts', description: 'Paid largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'block_production', description: 'Paid Solana block-production skip rate. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1724,6 +1764,7 @@ const server = createServer(async (req, res) => {
         circulating_supply: '/circ',
         vote_counts: '/votes',
         largest_accounts: '/whales',
+        block_production: '/blocks',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
