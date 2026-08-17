@@ -20,6 +20,7 @@ const ROUTE_PRICE = {
   '/search': { usdc: '10000', sol: '10000000' },
   '/screen': { usdc: '10000', sol: '10000000' },
   '/risk': { usdc: '20000', sol: '20000000' },
+  '/price': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -168,6 +169,10 @@ const BAZAAR = {
     topHolderPct: 12.4,
     verdict: 'ok',
   }),
+  '/price': bazaarExtension({ mint: 'So11111111111111111111111111111111111111112' }, {
+    mint: 'So11111111111111111111111111111111111111112',
+    usd: 148.2,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -197,6 +202,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/search': 'Web search results for a query',
         '/screen': 'OFAC SDN screen for a Solana wallet address',
         '/risk': 'Mint/freeze authority and holder-concentration risk for a Solana mint',
+        '/price': 'USD price for a Solana mint via Jupiter',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -212,7 +218,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                 ? ['ofac', 'sanctions', 'screen', 'solana']
                 : path === '/risk'
                   ? ['risk', 'mint', 'solana', 'token']
-                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                  : path === '/price'
+                    ? ['price', 'jupiter', 'solana', 'usd']
+                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -524,6 +532,33 @@ async function extractPage(target) {
   }
 }
 
+async function mintPrice(mint) {
+  const usdc = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+  const sol = 'So11111111111111111111111111111111111111112'
+  const amount = mint === usdc ? '1000000' : '1000000000'
+  const quoteUrl = 'https://lite-api.jup.ag/swap/v1/quote?inputMint=' + encodeURIComponent(mint)
+    + '&outputMint=' + encodeURIComponent(usdc)
+    + '&amount=' + amount
+    + '&slippageBps=50'
+  const res = await fetch(quoteUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.error || !body.outAmount) {
+    const err = new Error(body.error || 'jupiter price failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const usd = Number(body.outAmount) / 1e6
+  const unit = mint === usdc ? 1 : mint === sol ? 1 : Number(amount) / 1e9
+  return {
+    mint,
+    usd: mint === usdc ? 1 : Number((usd / (unit || 1)).toFixed(8)),
+    quoteOutUsdc: body.outAmount,
+    inAmount: body.inAmount,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function mintRisk(mint) {
   const supply = await rpc('getTokenSupply', [mint])
   const largest = await rpc('getTokenLargestAccounts', [mint])
@@ -651,6 +686,10 @@ const PAID = {
     validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
     run: async (url) => mintRisk(url.searchParams.get('mint')),
   },
+  '/price': {
+    validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
+    run: async (url) => mintPrice(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -666,6 +705,7 @@ function catalogResources() {
     { path: '/search', description: 'Web search. Query: q' },
     { path: '/screen', description: 'OFAC SDN screen for a Solana wallet. Query: address' },
     { path: '/risk', description: 'Mint/freeze authority and holder concentration. Query: mint' },
+    { path: '/price', description: 'USD price for a Solana mint via Jupiter. Query: mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -738,6 +778,7 @@ const server = createServer(async (req, res) => {
               { name: 'web_search', description: 'Paid web search. 0.01 USDC.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
               { name: 'ofac_screen', description: 'Paid OFAC SDN screen for a Solana address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'mint_risk', description: 'Paid Solana mint risk: authorities + holder concentration. 0.02 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'mint_price', description: 'Paid Solana mint USD price via Jupiter. 0.005 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -753,6 +794,7 @@ const server = createServer(async (req, res) => {
         web_search: '/search',
         ofac_screen: '/screen',
         mint_risk: '/risk',
+        mint_price: '/price',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
