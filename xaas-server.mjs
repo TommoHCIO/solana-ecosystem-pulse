@@ -163,6 +163,7 @@ const ROUTE_PRICE = {
   '/txcs': { usdc: '5000', sol: '5000000' },
   '/stcs': { usdc: '5000', sol: '5000000' },
   '/psmp': { usdc: '10000', sol: '10000000' },
+  '/vnid': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1087,6 +1088,15 @@ const BAZAAR = {
     tps: 0,
     samples: [],
   }),
+  '/vnid': bazaarExtension({
+    identity: 'Certusm1sa411sMpV9FPqU5dXAYhmmhygvxJ23S6hJ24',
+  }, {
+    identity: 'Certusm1sa411sMpV9FPqU5dXAYhmmhygvxJ23S6hJ24',
+    found: false,
+    current: 0,
+    delinquent: 0,
+    votes: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1257,6 +1267,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/txcs': 'Live Solana ledger transaction count after a minimum context slot',
         '/stcs': 'Live Solana signature statuses after a minimum context slot',
         '/psmp': 'Live Solana recent performance samples for a required sample limit',
+        '/vnid': 'Live Solana vote accounts for a required validator identity',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1554,7 +1565,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                           ? ['solana', 'rpc', 'sig', 'slot']
                                                                                                                                                                                                                                                                                                           : path === '/psmp'
                                                                                                                                                                                                                                                                                                             ? ['solana', 'rpc', 'tps', 'samples']
-                                                                                                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                            : path === '/vnid'
+                                                                                                                                                                                                                                                                                                              ? ['solana', 'rpc', 'vote', 'identity']
+                                                                                                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3483,6 +3496,30 @@ async function voteAccount(voteRaw) {
     rootSlot: row.rootSlot ?? null,
     epochCredits: Array.isArray(row.epochCredits) ? row.epochCredits.slice(-4) : [],
     delinquent: !current[0],
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function voteAccountsByIdentity(identityRaw) {
+  const identity = requirePubkey('identity', identityRaw)
+  const res = await rpc('getVoteAccounts', [])
+  const current = (res.result?.current || []).filter((row) => row.nodePubkey === identity)
+  const delinquent = (res.result?.delinquent || []).filter((row) => row.nodePubkey === identity)
+  const rows = [...current, ...delinquent].map((row) => ({
+    vote: row.votePubkey ?? null,
+    node: row.nodePubkey ?? null,
+    commission: row.commission ?? null,
+    activatedStake: row.activatedStake ?? 0,
+    lastVote: row.lastVote ?? null,
+    rootSlot: row.rootSlot ?? null,
+    delinquent: !current.includes(row),
+  }))
+  return {
+    identity,
+    found: rows.length > 0,
+    current: current.length,
+    delinquent: delinquent.length,
+    votes: rows,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -6457,6 +6494,14 @@ const PAID = {
       url.searchParams.get('limit'),
     ),
   },
+  '/vnid': {
+    validate(url) {
+      requirePubkey('identity', url.searchParams.get('identity'))
+    },
+    run: async (url) => voteAccountsByIdentity(
+      url.searchParams.get('identity'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6613,6 +6658,7 @@ function catalogResources() {
     { path: '/txcs', description: 'Live Solana ledger transaction count after a minimum context slot' },
     { path: '/stcs', description: 'Live Solana signature statuses after a minimum context slot' },
     { path: '/psmp', description: 'Live Solana recent performance samples for a required sample limit' },
+    { path: '/vnid', description: 'Live Solana vote accounts for a required validator identity' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6829,6 +6875,7 @@ const server = createServer(async (req, res) => {
               { name: 'transaction_count_min_context', description: 'Paid Solana ledger transaction count after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'signature_statuses_min_context', description: 'Paid Solana getSignatureStatuses after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { sigs: { type: 'string' }, slot: { type: 'string' } }, required: ['sigs', 'slot'] } },
               { name: 'performance_samples', description: 'Paid Solana recent performance samples for a required sample limit. 0.01 USDC.', inputSchema: { type: 'object', properties: { limit: { type: 'string' } }, required: ['limit'] } },
+              { name: 'vote_accounts_by_identity', description: 'Paid Solana vote accounts for a required validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
             ],
           },
         })
@@ -6985,6 +7032,7 @@ const server = createServer(async (req, res) => {
         transaction_count_min_context: '/txcs',
         signature_statuses_min_context: '/stcs',
         performance_samples: '/psmp',
+        vote_accounts_by_identity: '/vnid',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
