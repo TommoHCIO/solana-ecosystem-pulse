@@ -7,7 +7,7 @@
     "x-guidance": "1) GET /sample to inspect quality. 2) GET a paid route WITH the required query params. 3) On 402, pay the first accept (Solana USDC, feePayer 2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4) then retry with PAYMENT-SIGNATURE. Missing params return 400 before payment."
   },
   "servers": [
-    { "url": "https://lobby-laptop-shame-achieved.trycloudflare.com" }
+    { "url": "https://meant-aye-allan-exit.trycloudflare.com" }
   ],
   "paths": {
     "/sample": {

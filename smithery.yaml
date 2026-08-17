@@ -1,6 +1,6 @@
 name: solana-pulse-xaas
 description: Solana Jupiter quotes, web search, HTTPS extract, and package preflight for AI agents. Free sample. Paid x402 on Solana USDC.
-remote: https://lobby-laptop-shame-achieved.trycloudflare.com/mcp
+remote: https://meant-aye-allan-exit.trycloudflare.com/mcp
 startCommand:
   type: http
   configSchema:

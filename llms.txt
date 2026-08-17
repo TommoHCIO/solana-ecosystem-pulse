@@ -27,8 +27,8 @@ License/preflight are static heuristics, not a law firm. Params still validate b
 - GET /tx?sig=
 - GET /tokens?address=
 
-Base: https://lobby-laptop-shame-achieved.trycloudflare.com
-Catalog: https://lobby-laptop-shame-achieved.trycloudflare.com/.well-known/x402.json
+Base: https://meant-aye-allan-exit.trycloudflare.com
+Catalog: https://meant-aye-allan-exit.trycloudflare.com/.well-known/x402.json
 Pay: solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=paid-call
 Hosted snapshot: 0.25 SOL at https://tommohcio.github.io/solana-ecosystem-pulse/
 
