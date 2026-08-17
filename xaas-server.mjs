@@ -84,6 +84,7 @@ const ROUTE_PRICE = {
   '/sim': { usdc: '15000', sol: '15000000' },
   '/nce': { usdc: '10000', sol: '10000000' },
   '/brw': { usdc: '10000', sol: '10000000' },
+  '/xfer': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -533,6 +534,11 @@ const BAZAAR = {
     lamports: 0,
     rewards: [],
   }),
+  '/xfer': bazaarExtension({ sig: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW' }, {
+    fee: 5000,
+    sol: [],
+    tokens: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -624,6 +630,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/sim': 'Live Solana simulateTransaction preflight for a signed transaction',
         '/nce': 'Live Solana durable nonce account metadata',
         '/brw': 'Live Solana getBlock reward rows for a slot',
+        '/xfer': 'Live Solana parsed SOL and SPL token transfers for a signature',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -763,7 +770,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                             ? ['solana', 'nonce', 'durable', 'account']
                                                                                                                                             : path === '/brw'
                                                                                                                                               ? ['solana', 'block', 'rewards', 'lamports']
-                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                              : path === '/xfer'
+                                                                                                                                                ? ['solana', 'token', 'transfers', 'parsed']
+                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -870,6 +879,22 @@ async function multipleAccounts(raw) {
 
 function isPubkey(value) {
   return typeof value === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)
+}
+
+function requireSig(name, value) {
+  if (!value) {
+    const err = new Error(name + ' query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  if (typeof value !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(value)) {
+    const err = new Error(name + ' must be a base58 transaction signature')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return value
 }
 
 async function rpc(method, params) {
@@ -1011,6 +1036,59 @@ async function solTx(sig) {
     throw err
   }
   return { sig, found: true, tx: tx.result, generatedAt: new Date().toISOString() }
+}
+
+async function parsedTransfers(sigRaw) {
+  const sig = requireSig('sig', sigRaw)
+  const tx = await rpc('getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }])
+  if (!tx.result) {
+    const err = new Error('transaction not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const meta = tx.result.meta || {}
+  const keys = (tx.result.transaction?.message?.accountKeys || []).map((k) => (typeof k === 'string' ? k : k.pubkey))
+  const sol = keys.map((pubkey, idx) => {
+    const pre = Number(meta.preBalances?.[idx] || 0)
+    const post = Number(meta.postBalances?.[idx] || 0)
+    return { pubkey, pre, post, lamports: post - pre }
+  }).filter((row) => row.lamports !== 0).slice(0, 16)
+  const preTokens = Array.isArray(meta.preTokenBalances) ? meta.preTokenBalances : []
+  const postTokens = Array.isArray(meta.postTokenBalances) ? meta.postTokenBalances : []
+  const tokenMap = new Map()
+  for (const row of preTokens) {
+    const key = [row.accountIndex, row.mint, row.owner].join(':')
+    tokenMap.set(key, {
+      account: keys[row.accountIndex] || null,
+      mint: row.mint ?? null,
+      owner: row.owner ?? null,
+      pre: row.uiTokenAmount?.uiAmountString ?? '0',
+      post: '0',
+    })
+  }
+  for (const row of postTokens) {
+    const key = [row.accountIndex, row.mint, row.owner].join(':')
+    const current = tokenMap.get(key) || {
+      account: keys[row.accountIndex] || null,
+      mint: row.mint ?? null,
+      owner: row.owner ?? null,
+      pre: '0',
+      post: '0',
+    }
+    current.post = row.uiTokenAmount?.uiAmountString ?? '0'
+    tokenMap.set(key, current)
+  }
+  const tokens = [...tokenMap.values()].filter((row) => row.pre !== row.post).slice(0, 16)
+  return {
+    sig,
+    slot: tx.result.slot ?? null,
+    err: meta.err ?? null,
+    fee: meta.fee ?? 0,
+    sol,
+    tokens,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 async function tokenAccountsByDelegate(delegateRaw) {
@@ -2766,6 +2844,10 @@ const PAID = {
     validate(url) { parseSlot(url.searchParams.get('slot')) },
     run: async (url) => blockRewards(url.searchParams.get('slot')),
   },
+  '/xfer': {
+    validate(url) { requireSig('sig', url.searchParams.get('sig')) },
+    run: async (url) => parsedTransfers(url.searchParams.get('sig')),
+  },
 }
 
 function catalogResources() {
@@ -2843,6 +2925,7 @@ function catalogResources() {
     { path: '/sim', description: 'Live Solana simulateTransaction preflight for a signed transaction' },
     { path: '/nce', description: 'Live Solana durable nonce account metadata' },
     { path: '/brw', description: 'Live Solana getBlock reward rows for a slot' },
+    { path: '/xfer', description: 'Live Solana parsed SOL and SPL token transfers for a signature' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2977,6 +3060,7 @@ const server = createServer(async (req, res) => {
               { name: 'simulate_transaction', description: 'Paid Solana simulateTransaction preflight. 0.015 USDC.', inputSchema: { type: 'object', properties: { tx: { type: 'string' } }, required: ['tx'] } },
               { name: 'nonce_account', description: 'Paid Solana durable nonce account metadata. 0.01 USDC.', inputSchema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] } },
               { name: 'block_rewards', description: 'Paid Solana getBlock reward rows for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'parsed_transfers', description: 'Paid Solana parsed SOL and SPL transfers for a signature. 0.015 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
             ],
           },
         })
@@ -3054,6 +3138,7 @@ const server = createServer(async (req, res) => {
         simulate_transaction: '/sim',
         nonce_account: '/nce',
         block_rewards: '/brw',
+        parsed_transfers: '/xfer',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
