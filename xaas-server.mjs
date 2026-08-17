@@ -117,6 +117,7 @@ const ROUTE_PRICE = {
   '/nver': { usdc: '10000', sol: '10000000' },
   '/scmt': { usdc: '10000', sol: '10000000' },
   '/lsep': { usdc: '10000', sol: '10000000' },
+  '/bpir': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -709,6 +710,10 @@ const BAZAAR = {
     leaders: 0,
     slotsAssigned: 0,
   }),
+  '/bpir': bazaarExtension({ identity: 'Certusm1sa411sMpV9FPqU5dXAYhmmhygvxJ23S6hJ24', first: '439000000', last: '439000064' }, {
+    leaderSlots: 0,
+    skipped: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -833,6 +838,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/nver': 'Live Solana cluster node versions and feature sets',
         '/scmt': 'Live Solana current-slot vote commitment lockouts',
         '/lsep': 'Live Solana leader-schedule summary for the epoch of a slot',
+        '/bpir': 'Live Solana block production for one validator in a slot range',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1038,7 +1044,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                               ? ['solana', 'slot', 'commitment', 'lockouts']
                                                                                                                                                                                                               : path === '/lsep'
                                                                                                                                                                                                                 ? ['solana', 'leader', 'schedule', 'epoch']
-                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                : path === '/bpir'
+                                                                                                                                                                                                                  ? ['solana', 'blocks', 'identity', 'range']
+                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2308,6 +2316,42 @@ async function blockProductionByIdentity(identityRaw) {
     found: Array.isArray(row),
     firstSlot: range.firstSlot ?? null,
     lastSlot: range.lastSlot ?? null,
+    leaderSlots,
+    blocksProduced,
+    skipped,
+    skipRate: leaderSlots ? Number((skipped / leaderSlots).toFixed(6)) : 0,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function blockProductionByIdentityRange(identityRaw, firstRaw, lastRaw) {
+  const identity = requirePubkey('identity', identityRaw)
+  const firstSlot = parseNamedSlot('first', firstRaw)
+  const lastSlot = parseNamedSlot('last', lastRaw)
+  if (lastSlot < firstSlot) {
+    const err = new Error('last must be greater than or equal to first')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  if (lastSlot - firstSlot > 432000) {
+    const err = new Error('range must be at most 432000 slots')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const res = await rpc('getBlockProduction', [{ identity, range: { firstSlot, lastSlot } }])
+  const value = res.result?.value || {}
+  const range = value.range || {}
+  const row = value.byIdentity?.[identity]
+  const leaderSlots = Array.isArray(row) ? Number(row[0] || 0) : 0
+  const blocksProduced = Array.isArray(row) ? Number(row[1] || 0) : 0
+  const skipped = Math.max(0, leaderSlots - blocksProduced)
+  return {
+    identity,
+    found: Array.isArray(row),
+    firstSlot: range.firstSlot ?? firstSlot,
+    lastSlot: range.lastSlot ?? lastSlot,
     leaderSlots,
     blocksProduced,
     skipped,
@@ -4338,6 +4382,22 @@ const PAID = {
     validate(url) { parseSlot(url.searchParams.get('slot')) },
     run: async (url) => leaderScheduleForSlot(url.searchParams.get('slot')),
   },
+  '/bpir': {
+    validate(url) {
+      requirePubkey('identity', url.searchParams.get('identity'))
+      parseNamedSlot('first', url.searchParams.get('first'))
+      parseNamedSlot('last', url.searchParams.get('last'))
+      const first = Number(url.searchParams.get('first'))
+      const last = Number(url.searchParams.get('last'))
+      if (last < first) {
+        const err = new Error('last must be greater than or equal to first')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => blockProductionByIdentityRange(url.searchParams.get('identity'), url.searchParams.get('first'), url.searchParams.get('last')),
+  },
 }
 
 function catalogResources() {
@@ -4448,6 +4508,7 @@ function catalogResources() {
     { path: '/nver', description: 'Live Solana cluster node versions and feature sets' },
     { path: '/scmt', description: 'Live Solana current-slot vote commitment lockouts' },
     { path: '/lsep', description: 'Live Solana leader-schedule summary for the epoch of a slot' },
+    { path: '/bpir', description: 'Live Solana block production for one validator in a slot range' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4618,6 +4679,7 @@ const server = createServer(async (req, res) => {
               { name: 'cluster_node_versions', description: 'Paid Solana cluster node versions and feature sets. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'slot_commitment', description: 'Paid Solana current-slot vote commitment lockouts. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } } } },
               { name: 'leader_schedule_epoch', description: 'Paid Solana leader-schedule summary for the epoch of a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'block_production_identity_range', description: 'Paid Solana block production for one validator in a slot range. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' }, first: { type: 'string' }, last: { type: 'string' } }, required: ['identity', 'first', 'last'] } },
             ],
           },
         })
@@ -4728,6 +4790,7 @@ const server = createServer(async (req, res) => {
         cluster_node_versions: '/nver',
         slot_commitment: '/scmt',
         leader_schedule_epoch: '/lsep',
+        block_production_identity_range: '/bpir',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
