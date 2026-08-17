@@ -80,6 +80,7 @@ const ROUTE_PRICE = {
   '/delg': { usdc: '10000', sol: '10000000' },
   '/alt': { usdc: '10000', sol: '10000000' },
   '/gpa': { usdc: '15000', sol: '15000000' },
+  '/ffm': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -509,6 +510,10 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/ffm': bazaarExtension({ message: 'AQABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9A' }, {
+    lamports: 5000,
+    sol: 0.000005,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -596,6 +601,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/delg': 'Live Solana SPL token accounts by approved delegate',
         '/alt': 'Live Solana address lookup table metadata',
         '/gpa': 'Live Solana size-filtered program accounts',
+        '/ffm': 'Live Solana fee for a serialized transaction message',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -727,7 +733,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                     ? ['solana', 'lookup', 'table', 'alt']
                                                                                                                                     : path === '/gpa'
                                                                                                                                       ? ['solana', 'program', 'accounts', 'filter']
-                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                      : path === '/ffm'
+                                                                                                                                        ? ['solana', 'fee', 'message', 'lamports']
+                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1541,6 +1549,34 @@ async function programAccounts(programRaw, spaceRaw) {
     space,
     count: rows.length,
     accounts: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function parseMessage(raw) {
+  if (raw === null || raw === '') {
+    const err = new Error('message query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const message = String(raw).trim()
+  if (!/^[A-Za-z0-9+/]+=*$/.test(message) || message.length < 32 || message.length > 2048) {
+    const err = new Error('message must be base64 between 32 and 2048 characters')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return message
+}
+
+async function feeForMessage(messageRaw) {
+  const message = parseMessage(messageRaw)
+  const res = await rpc('getFeeForMessage', [message])
+  const lamports = Number(res.result?.value ?? 0)
+  return {
+    lamports,
+    sol: lamports / 1e9,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -2603,6 +2639,10 @@ const PAID = {
     },
     run: async (url) => programAccounts(url.searchParams.get('program'), url.searchParams.get('space')),
   },
+  '/ffm': {
+    validate(url) { parseMessage(url.searchParams.get('message')) },
+    run: async (url) => feeForMessage(url.searchParams.get('message')),
+  },
 }
 
 function catalogResources() {
@@ -2676,6 +2716,7 @@ function catalogResources() {
     { path: '/delg', description: 'Live Solana SPL token accounts by approved delegate' },
     { path: '/alt', description: 'Live Solana address lookup table metadata' },
     { path: '/gpa', description: 'Live Solana size-filtered program accounts' },
+    { path: '/ffm', description: 'Live Solana fee for a serialized transaction message' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2806,6 +2847,7 @@ const server = createServer(async (req, res) => {
               { name: 'token_accounts_by_delegate', description: 'Paid Solana getTokenAccountsByDelegate. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' } }, required: ['delegate'] } },
               { name: 'address_lookup_table', description: 'Paid Solana address lookup table metadata. 0.01 USDC.', inputSchema: { type: 'object', properties: { table: { type: 'string' } }, required: ['table'] } },
               { name: 'program_accounts', description: 'Paid Solana getProgramAccounts filtered by dataSize. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' } }, required: ['program', 'space'] } },
+              { name: 'fee_for_message', description: 'Paid Solana getFeeForMessage for a serialized message. 0.01 USDC.', inputSchema: { type: 'object', properties: { message: { type: 'string' } }, required: ['message'] } },
             ],
           },
         })
@@ -2879,6 +2921,7 @@ const server = createServer(async (req, res) => {
         token_accounts_by_delegate: '/delg',
         address_lookup_table: '/alt',
         program_accounts: '/gpa',
+        fee_for_message: '/ffm',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
