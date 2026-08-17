@@ -34,6 +34,7 @@ const ROUTE_PRICE = {
   '/isbn': { usdc: '3000', sol: '3000000' },
   '/semver': { usdc: '3000', sol: '3000000' },
   '/mime': { usdc: '3000', sol: '3000000' },
+  '/lang': { usdc: '3000', sol: '3000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -243,6 +244,11 @@ const BAZAAR = {
     ext: 'pdf',
     mime: 'application/pdf',
   }),
+  '/lang': bazaarExtension({ code: 'it' }, {
+    code: 'it',
+    name: 'Italian',
+    iso6391: 'it',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -284,6 +290,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/isbn': 'Validate ISBN-10/13 and convert between formats',
         '/semver': 'Compare two SemVer versions',
         '/mime': 'Look up MIME type from a file extension',
+        '/lang': 'Look up ISO 639 language code name',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -323,7 +330,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                         ? ['semver', 'version', 'compare', 'npm']
                                         : path === '/mime'
                                           ? ['mime', 'extension', 'file', 'type']
-                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                          : path === '/lang'
+                                            ? ['language', 'iso639', 'locale', 'i18n']
+                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -685,6 +694,47 @@ const MIME_BY_EXT = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
   svg: 'image/svg+xml', ico: 'image/x-icon', mp3: 'audio/mpeg', wav: 'audio/wav', mp4: 'video/mp4',
   webm: 'video/webm', wasm: 'application/wasm', woff2: 'font/woff2', ttf: 'font/ttf',
+}
+
+const LANG_BY_CODE = {
+  en: { name: 'English', native: 'English' },
+  it: { name: 'Italian', native: 'Italiano' },
+  es: { name: 'Spanish', native: 'Español' },
+  fr: { name: 'French', native: 'Français' },
+  de: { name: 'German', native: 'Deutsch' },
+  pt: { name: 'Portuguese', native: 'Português' },
+  nl: { name: 'Dutch', native: 'Nederlands' },
+  pl: { name: 'Polish', native: 'Polski' },
+  ru: { name: 'Russian', native: 'Русский' },
+  ja: { name: 'Japanese', native: '日本語' },
+  zh: { name: 'Chinese', native: '中文' },
+  ko: { name: 'Korean', native: '한국어' },
+  ar: { name: 'Arabic', native: 'العربية' },
+  hi: { name: 'Hindi', native: 'हिन्दी' },
+  tr: { name: 'Turkish', native: 'Türkçe' },
+  sv: { name: 'Swedish', native: 'Svenska' },
+  da: { name: 'Danish', native: 'Dansk' },
+  fi: { name: 'Finnish', native: 'Suomi' },
+  no: { name: 'Norwegian', native: 'Norsk' },
+  el: { name: 'Greek', native: 'Ελληνικά' },
+}
+
+function lookupLang(raw) {
+  const code = requireText('code', raw).toLowerCase()
+  if (!/^[a-z]{2}$/.test(code)) {
+    const err = new Error('code must be ISO 639-1')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const hit = LANG_BY_CODE[code]
+  if (!hit) {
+    const err = new Error('unknown language code')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return { code, name: hit.name, native: hit.native, iso6391: code, generatedAt: new Date().toISOString() }
 }
 
 function lookupMime(raw) {
@@ -1201,6 +1251,10 @@ const PAID = {
     validate(url) { lookupMime(url.searchParams.get('ext')) },
     run: async (url) => lookupMime(url.searchParams.get('ext')),
   },
+  '/lang': {
+    validate(url) { lookupLang(url.searchParams.get('code')) },
+    run: async (url) => lookupLang(url.searchParams.get('code')),
+  },
 }
 
 function catalogResources() {
@@ -1228,6 +1282,7 @@ function catalogResources() {
     { path: '/isbn', description: 'Validate ISBN-10/13 and convert formats. Query: isbn' },
     { path: '/semver', description: 'Compare two SemVer versions. Query: a, b' },
     { path: '/mime', description: 'Look up MIME type from a file extension. Query: ext' },
+    { path: '/lang', description: 'Look up ISO 639-1 language code. Query: code' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1312,6 +1367,7 @@ const server = createServer(async (req, res) => {
               { name: 'isbn_check', description: 'Paid ISBN-10/13 validate and convert. 0.003 USDC.', inputSchema: { type: 'object', properties: { isbn: { type: 'string' } }, required: ['isbn'] } },
               { name: 'semver_compare', description: 'Paid SemVer compare. 0.003 USDC.', inputSchema: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['a', 'b'] } },
               { name: 'mime_lookup', description: 'Paid MIME type from file extension. 0.003 USDC.', inputSchema: { type: 'object', properties: { ext: { type: 'string' } }, required: ['ext'] } },
+              { name: 'lang_lookup', description: 'Paid ISO 639-1 language lookup. 0.003 USDC.', inputSchema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] } },
             ],
           },
         })
@@ -1339,6 +1395,7 @@ const server = createServer(async (req, res) => {
         isbn_check: '/isbn',
         semver_compare: '/semver',
         mime_lookup: '/mime',
+        lang_lookup: '/lang',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
