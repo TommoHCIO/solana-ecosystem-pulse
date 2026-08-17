@@ -47,6 +47,7 @@ const ROUTE_PRICE = {
   '/whales': { usdc: '15000', sol: '15000000' },
   '/blocks': { usdc: '10000', sol: '10000000' },
   '/nodes': { usdc: '10000', sol: '10000000' },
+  '/ver': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -317,6 +318,10 @@ const BAZAAR = {
     rpc: 400,
     gossip: 1800,
   }),
+  '/ver': bazaarExtension({}, {
+    'solana-core': '2.1.0',
+    'feature-set': 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -371,6 +376,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/whales': 'Largest native SOL accounts',
         '/blocks': 'Current-epoch Solana block production skip rate',
         '/nodes': 'Live Solana gossip cluster node counts',
+        '/ver': 'Live Solana RPC software version and feature set',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -436,7 +442,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                   ? ['solana', 'blocks', 'skip-rate', 'epoch']
                                                                   : path === '/nodes'
                                                                     ? ['solana', 'cluster', 'gossip', 'nodes']
-                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                    : path === '/ver'
+                                                                      ? ['solana', 'version', 'feature-set', 'rpc']
+                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -824,6 +832,16 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function clusterVersion() {
+  const res = await rpc('getVersion', [])
+  const value = res.result || {}
+  return {
+    solanaCore: value['solana-core'],
+    featureSet: value['feature-set'],
+    generatedAt: new Date().toISOString(),
+  }
+}
 
 async function clusterNodes() {
   const res = await rpc('getClusterNodes', [])
@@ -1616,6 +1634,10 @@ const PAID = {
     validate() {},
     run: async () => clusterNodes(),
   },
+  '/ver': {
+    validate() {},
+    run: async () => clusterVersion(),
+  },
 }
 
 function catalogResources() {
@@ -1656,6 +1678,7 @@ function catalogResources() {
     { path: '/whales', description: 'Largest native SOL accounts' },
     { path: '/blocks', description: 'Current-epoch Solana block production skip rate' },
     { path: '/nodes', description: 'Live Solana gossip cluster node counts' },
+    { path: '/ver', description: 'Live Solana RPC software version and feature set' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1753,6 +1776,7 @@ const server = createServer(async (req, res) => {
               { name: 'largest_accounts', description: 'Paid largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'block_production', description: 'Paid Solana block-production skip rate. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'cluster_nodes', description: 'Paid Solana gossip cluster node counts. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'cluster_version', description: 'Paid Solana RPC software version. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1793,6 +1817,7 @@ const server = createServer(async (req, res) => {
         largest_accounts: '/whales',
         block_production: '/blocks',
         cluster_nodes: '/nodes',
+        cluster_version: '/ver',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
