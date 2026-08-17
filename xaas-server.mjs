@@ -103,6 +103,7 @@ const ROUTE_PRICE = {
   '/circw': { usdc: '15000', sol: '15000000' },
   '/ldad': { usdc: '10000', sol: '10000000' },
   '/tpu': { usdc: '10000', sol: '10000000' },
+  '/ncw': { usdc: '15000', sol: '15000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -639,6 +640,10 @@ const BAZAAR = {
     count: 0,
     nodes: [],
   }),
+  '/ncw': bazaarExtension({}, {
+    count: 0,
+    accounts: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -749,6 +754,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/circw': 'Live Solana circulating largest native SOL accounts',
         '/ldad': 'Live Solana versioned transaction loaded addresses',
         '/tpu': 'Live Solana cluster TPU gossip and RPC endpoints',
+        '/ncw': 'Live Solana non-circulating largest native SOL accounts',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -926,7 +932,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                   ? ['solana', 'transaction', 'alt', 'loaded']
                                                                                                                                                                                   : path === '/tpu'
                                                                                                                                                                                     ? ['solana', 'cluster', 'tpu', 'gossip']
-                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                    : path === '/ncw'
+                                                                                                                                                                                      ? ['solana', 'whales', 'noncirculating', 'sol']
+                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2094,6 +2102,21 @@ async function circulatingLargestAccounts() {
   }))
   return {
     filter: 'circulating',
+    count: accounts.length,
+    accounts,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function nonCirculatingLargestAccounts() {
+  const res = await rpc('getLargestAccounts', [{ filter: 'nonCirculating' }])
+  const accounts = (res.result?.value || []).slice(0, 20).map((row) => ({
+    address: row.address,
+    lamports: row.lamports,
+    sol: Number((row.lamports / 1e9).toFixed(9)),
+  }))
+  return {
+    filter: 'nonCirculating',
     count: accounts.length,
     accounts,
     generatedAt: new Date().toISOString(),
@@ -3712,6 +3735,10 @@ const PAID = {
     validate() {},
     run: async () => clusterTpuEndpoints(),
   },
+  '/ncw': {
+    validate() {},
+    run: async () => nonCirculatingLargestAccounts(),
+  },
 }
 
 function catalogResources() {
@@ -3808,6 +3835,7 @@ function catalogResources() {
     { path: '/circw', description: 'Live Solana circulating largest native SOL accounts' },
     { path: '/ldad', description: 'Live Solana versioned transaction loaded addresses' },
     { path: '/tpu', description: 'Live Solana cluster TPU gossip and RPC endpoints' },
+    { path: '/ncw', description: 'Live Solana non-circulating largest native SOL accounts' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3961,6 +3989,7 @@ const server = createServer(async (req, res) => {
               { name: 'circulating_whales', description: 'Paid Solana circulating largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'loaded_addresses', description: 'Paid Solana versioned transaction loaded addresses. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
               { name: 'cluster_tpu', description: 'Paid Solana cluster TPU gossip and RPC endpoints. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'noncirculating_whales', description: 'Paid Solana non-circulating largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -4057,6 +4086,7 @@ const server = createServer(async (req, res) => {
         circulating_whales: '/circw',
         loaded_addresses: '/ldad',
         cluster_tpu: '/tpu',
+        noncirculating_whales: '/ncw',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
