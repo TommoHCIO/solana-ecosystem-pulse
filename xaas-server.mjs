@@ -120,6 +120,7 @@ const ROUTE_PRICE = {
   '/bpir': { usdc: '10000', sol: '10000000' },
   '/rewm': { usdc: '10000', sol: '10000000' },
   '/nshd': { usdc: '10000', sol: '10000000' },
+  '/rwme': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -724,6 +725,10 @@ const BAZAAR = {
     count: 0,
     shreds: [],
   }),
+  '/rwme': bazaarExtension({ addresses: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA', epoch: '800' }, {
+    count: 0,
+    found: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -851,6 +856,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/bpir': 'Live Solana block production for one validator in a slot range',
         '/rewm': 'Live Solana inflation rewards for multiple stake or vote addresses',
         '/nshd': 'Live Solana cluster shred-version histogram',
+        '/rwme': 'Live Solana inflation rewards for multiple addresses in a chosen epoch',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1062,7 +1068,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                     ? ['solana', 'inflation', 'rewards', 'batch']
                                                                                                                                                                                                                     : path === '/nshd'
                                                                                                                                                                                                                       ? ['solana', 'cluster', 'shred', 'version']
-                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                      : path === '/rwme'
+                                                                                                                                                                                                                        ? ['solana', 'inflation', 'rewards', 'epoch']
+                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3059,6 +3067,41 @@ async function inflationRewardsMany(addressesRaw) {
   }
 }
 
+async function inflationRewardsManyEpoch(addressesRaw, epochRaw) {
+  const addresses = parseAddresses(addressesRaw)
+  if (epochRaw === null || epochRaw === '') {
+    const err = new Error('epoch query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const epoch = Number(epochRaw)
+  if (!Number.isInteger(epoch) || epoch < 0) {
+    const err = new Error('epoch must be a non-negative integer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const res = await rpc('getInflationReward', [addresses, { epoch }])
+  const rows = (Array.isArray(res.result) ? res.result : []).map((row, index) => ({
+    address: addresses[index],
+    found: Boolean(row),
+    epoch: row?.epoch ?? null,
+    effectiveSlot: row?.effectiveSlot ?? null,
+    amount: row?.amount ?? null,
+    postBalance: row?.postBalance ?? null,
+    commission: row?.commission ?? null,
+  }))
+  return {
+    requestedEpoch: epoch,
+    count: rows.length,
+    found: rows.filter((row) => row.found).length,
+    amount: rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0),
+    rewards: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function inflationGovernor() {
   const res = await rpc('getInflationGovernor', [])
   const value = res.result || {}
@@ -4461,6 +4504,26 @@ const PAID = {
     validate() {},
     run: async () => clusterShredVersions(),
   },
+  '/rwme': {
+    validate(url) {
+      parseAddresses(url.searchParams.get('addresses'))
+      const epochRaw = url.searchParams.get('epoch')
+      if (epochRaw === null || epochRaw === '') {
+        const err = new Error('epoch query param is required')
+        err.status = 400
+        err.code = 'missing_param'
+        throw err
+      }
+      const epoch = Number(epochRaw)
+      if (!Number.isInteger(epoch) || epoch < 0) {
+        const err = new Error('epoch must be a non-negative integer')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => inflationRewardsManyEpoch(url.searchParams.get('addresses'), url.searchParams.get('epoch')),
+  },
 }
 
 function catalogResources() {
@@ -4574,6 +4637,7 @@ function catalogResources() {
     { path: '/bpir', description: 'Live Solana block production for one validator in a slot range' },
     { path: '/rewm', description: 'Live Solana inflation rewards for multiple stake or vote addresses' },
     { path: '/nshd', description: 'Live Solana cluster shred-version histogram' },
+    { path: '/rwme', description: 'Live Solana inflation rewards for multiple addresses in a chosen epoch' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4747,6 +4811,7 @@ const server = createServer(async (req, res) => {
               { name: 'block_production_identity_range', description: 'Paid Solana block production for one validator in a slot range. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' }, first: { type: 'string' }, last: { type: 'string' } }, required: ['identity', 'first', 'last'] } },
               { name: 'inflation_rewards_many', description: 'Paid Solana inflation rewards for multiple stake or vote addresses. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' } }, required: ['addresses'] } },
               { name: 'cluster_shred_versions', description: 'Paid Solana cluster shred-version histogram. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'inflation_rewards_many_epoch', description: 'Paid Solana inflation rewards for multiple addresses in a chosen epoch. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, epoch: { type: 'string' } }, required: ['addresses', 'epoch'] } },
             ],
           },
         })
@@ -4860,6 +4925,7 @@ const server = createServer(async (req, res) => {
         block_production_identity_range: '/bpir',
         inflation_rewards_many: '/rewm',
         cluster_shred_versions: '/nshd',
+        inflation_rewards_many_epoch: '/rwme',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
