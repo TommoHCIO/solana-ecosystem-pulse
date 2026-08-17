@@ -113,6 +113,7 @@ const ROUTE_PRICE = {
   '/gpsl': { usdc: '15000', sol: '15000000' },
   '/blkt': { usdc: '10000', sol: '10000000' },
   '/vdel': { usdc: '10000', sol: '10000000' },
+  '/bpr': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -689,6 +690,10 @@ const BAZAAR = {
     count: 0,
     delinquent: [],
   }),
+  '/bpr': bazaarExtension({ first: '439000000', last: '439000064' }, {
+    leaderSlots: 0,
+    skipped: 0,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -809,6 +814,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/gpsl': 'Live Solana program accounts with a sized data slice',
         '/blkt': 'Live Solana versioned block signatures for a slot',
         '/vdel': 'Live Solana delinquent vote accounts including unstaked',
+        '/bpr': 'Live Solana block production skip rate for a slot range',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1006,7 +1012,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                       ? ['solana', 'block', 'signatures', 'versioned']
                                                                                                                                                                                                       : path === '/vdel'
                                                                                                                                                                                                         ? ['solana', 'votes', 'delinquent', 'unstaked']
-                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                        : path === '/bpr'
+                                                                                                                                                                                                          ? ['solana', 'blocks', 'production', 'range']
+                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2237,6 +2245,62 @@ async function blockProductionByIdentity(identityRaw) {
     found: Array.isArray(row),
     firstSlot: range.firstSlot ?? null,
     lastSlot: range.lastSlot ?? null,
+    leaderSlots,
+    blocksProduced,
+    skipped,
+    skipRate: leaderSlots ? Number((skipped / leaderSlots).toFixed(6)) : 0,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function parseNamedSlot(name, raw) {
+  if (raw === null || raw === '') {
+    const err = new Error(name + ' query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const slot = Number(raw)
+  if (!Number.isInteger(slot) || slot < 0) {
+    const err = new Error(name + ' must be a non-negative integer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return slot
+}
+
+async function blockProductionRange(firstRaw, lastRaw) {
+  const firstSlot = parseNamedSlot('first', firstRaw)
+  const lastSlot = parseNamedSlot('last', lastRaw)
+  if (lastSlot < firstSlot) {
+    const err = new Error('last must be greater than or equal to first')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  if (lastSlot - firstSlot > 432000) {
+    const err = new Error('range must be at most 432000 slots')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const res = await rpc('getBlockProduction', [{ range: { firstSlot, lastSlot } }])
+  const value = res.result?.value || {}
+  const range = value.range || {}
+  const byIdentity = value.byIdentity || {}
+  let leaderSlots = 0
+  let blocksProduced = 0
+  for (const row of Object.values(byIdentity)) {
+    if (Array.isArray(row) && row.length >= 2) {
+      leaderSlots += Number(row[0] || 0)
+      blocksProduced += Number(row[1] || 0)
+    }
+  }
+  const skipped = Math.max(0, leaderSlots - blocksProduced)
+  return {
+    firstSlot: range.firstSlot ?? firstSlot,
+    lastSlot: range.lastSlot ?? lastSlot,
     leaderSlots,
     blocksProduced,
     skipped,
@@ -4166,6 +4230,21 @@ const PAID = {
     validate() {},
     run: async () => delinquentVoteAccounts(),
   },
+  '/bpr': {
+    validate(url) {
+      parseNamedSlot('first', url.searchParams.get('first'))
+      parseNamedSlot('last', url.searchParams.get('last'))
+      const first = Number(url.searchParams.get('first'))
+      const last = Number(url.searchParams.get('last'))
+      if (last < first) {
+        const err = new Error('last must be greater than or equal to first')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => blockProductionRange(url.searchParams.get('first'), url.searchParams.get('last')),
+  },
 }
 
 function catalogResources() {
@@ -4272,6 +4351,7 @@ function catalogResources() {
     { path: '/gpsl', description: 'Live Solana program accounts with a sized data slice' },
     { path: '/blkt', description: 'Live Solana versioned block signatures for a slot' },
     { path: '/vdel', description: 'Live Solana delinquent vote accounts including unstaked' },
+    { path: '/bpr', description: 'Live Solana block production skip rate for a slot range' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4438,6 +4518,7 @@ const server = createServer(async (req, res) => {
               { name: 'program_account_slices', description: 'Paid Solana program accounts with a sized data slice. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['program', 'space', 'offset', 'length'] } },
               { name: 'block_signatures', description: 'Paid Solana versioned block signatures for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'delinquent_votes', description: 'Paid Solana delinquent vote accounts including unstaked. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'block_production_range', description: 'Paid Solana block production skip rate for a slot range. 0.01 USDC.', inputSchema: { type: 'object', properties: { first: { type: 'string' }, last: { type: 'string' } }, required: ['first', 'last'] } },
             ],
           },
         })
@@ -4544,6 +4625,7 @@ const server = createServer(async (req, res) => {
         program_account_slices: '/gpsl',
         block_signatures: '/blkt',
         delinquent_votes: '/vdel',
+        block_production_range: '/bpr',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
