@@ -177,6 +177,7 @@ const ROUTE_PRICE = {
   '/nft': { usdc: '10000', sol: '10000000' },
   '/dex': { usdc: '10000', sol: '10000000' },
   '/peg': { usdc: '10000', sol: '10000000' },
+  '/meta': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1212,6 +1213,13 @@ const BAZAAR = {
     deviationBps: null,
     verdict: 'on_peg',
   }),
+  '/meta': bazaarExtension({
+    mint: 'So11111111111111111111111111111111111111112',
+  }, {
+    mint: 'So11111111111111111111111111111111111111112',
+    name: null,
+    symbol: null,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1396,6 +1404,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/nft': 'Live Solana NFT collection floor and stats for a required Magic Eden symbol',
         '/dex': 'Live Solana token market data (price, liquidity, volume, change) for a required mint',
         '/peg': 'Live Solana stablecoin peg deviation and depeg verdict for a required mint',
+        '/meta': 'Live Solana token identity (name, symbol, icon, decimals, supply) for a required mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1721,7 +1730,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                                       ? ['solana', 'token', 'price', 'market-data']
                                                                                                                                                                                                                                                                                                                                       : path === '/peg'
                                                                                                                                                                                                                                                                                                                                         ? ['solana', 'stablecoin', 'peg', 'depeg']
-                                                                                                                                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                                        : path === '/meta'
+                                                                                                                                                                                                                                                                                                                                          ? ['solana', 'token', 'metadata', 'identity']
+                                                                                                                                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     quote: 'Pay ' + (Number(price.usdc) / 1e6) + ' USDC or ' + (Number(price.sol) / 1e9)
@@ -2983,6 +2994,40 @@ async function jupiterPerpTrades(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     trades: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function tokenMeta(mintRaw) {
+  const mint = requirePubkey('mint', mintRaw)
+  const jUrl = 'https://lite-api.jup.ag/tokens/v2/search?query=' + encodeURIComponent(mint)
+  const res = await fetch(jUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const arr = await res.json().catch(() => null)
+  if (!res.ok || !Array.isArray(arr)) {
+    const err = new Error('token metadata lookup failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const row = arr.find((t) => t && t.id === mint)
+  if (!row) {
+    const err = new Error('token not found on Jupiter')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const num = (v) => (typeof v === 'number' ? v : null)
+  return {
+    mint,
+    name: row.name ?? null,
+    symbol: row.symbol ?? null,
+    icon: row.icon ?? null,
+    decimals: num(row.decimals),
+    circSupply: num(row.circSupply),
+    totalSupply: num(row.totalSupply),
+    isVerified: typeof row.isVerified === 'boolean' ? row.isVerified : null,
+    tags: Array.isArray(row.tags) ? row.tags.slice(0, 8) : [],
+    source: 'jupiter',
     generatedAt: new Date().toISOString(),
   }
 }
@@ -7207,6 +7252,12 @@ const PAID = {
     },
     run: async (url) => stablecoinPeg(url.searchParams.get('mint')),
   },
+  '/meta': {
+    validate(url) {
+      requirePubkey('mint', url.searchParams.get('mint'))
+    },
+    run: async (url) => tokenMeta(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -7377,6 +7428,7 @@ function catalogResources() {
     { path: '/nft', description: 'Live Solana NFT collection floor and stats for a required Magic Eden symbol' },
     { path: '/dex', description: 'Live Solana token market data (price, liquidity, volume, change) for a required mint' },
     { path: '/peg', description: 'Live Solana stablecoin peg deviation and depeg verdict for a required mint' },
+    { path: '/meta', description: 'Live Solana token identity (name, symbol, icon, decimals, supply) for a required mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7607,6 +7659,7 @@ const server = createServer(async (req, res) => {
               { name: 'nft_collection_stats', description: 'Paid Solana NFT collection floor and stats for a required Magic Eden symbol. 0.01 USDC.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } },
               { name: 'dex_token_market', description: 'Paid Solana token market data (price, liquidity, 24h volume, price change) for a required mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'stablecoin_peg', description: 'Paid Solana stablecoin peg deviation (bps from $1) and depeg verdict for a required mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'token_meta', description: 'Paid Solana token identity (name, symbol, icon, decimals, supply, verification) for a required mint. 0.005 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -7777,6 +7830,7 @@ const server = createServer(async (req, res) => {
         nft_collection_stats: '/nft',
         dex_token_market: '/dex',
         stablecoin_peg: '/peg',
+        token_meta: '/meta',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
