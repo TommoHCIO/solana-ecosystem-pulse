@@ -130,6 +130,7 @@ const ROUTE_PRICE = {
   '/ownp': { usdc: '10000', sol: '10000000' },
   '/delm': { usdc: '10000', sol: '10000000' },
   '/delp': { usdc: '10000', sol: '10000000' },
+  '/blka': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -798,6 +799,10 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/blka': bazaarExtension({ slot: '439000000' }, {
+    count: 0,
+    transactions: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -935,6 +940,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/ownp': 'Live Solana token accounts for a wallet filtered by one token program',
         '/delm': 'Live Solana token accounts by approved delegate filtered by mint',
         '/delp': 'Live Solana token accounts by approved delegate filtered by one token program',
+        '/blka': 'Live Solana block transaction account keys for a slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1166,7 +1172,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                         ? ['solana', 'tokens', 'delegate', 'mint']
                                                                                                                                                                                                                                         : path === '/delp'
                                                                                                                                                                                                                                           ? ['solana', 'tokens', 'delegate', 'program']
-                                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                          : path === '/blka'
+                                                                                                                                                                                                                                            ? ['solana', 'block', 'accounts', 'keys']
+                                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -3197,6 +3205,44 @@ async function blockSignatures(slotRaw) {
   }
 }
 
+async function blockAccountKeys(slotRaw) {
+  const slot = parseSlot(slotRaw)
+  const res = await rpc('getBlock', [slot, {
+    encoding: 'json',
+    transactionDetails: 'accounts',
+    rewards: false,
+    maxSupportedTransactionVersion: 0,
+  }])
+  const value = res.result
+  if (!value) {
+    const err = new Error('block not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const rows = (Array.isArray(value.transactions) ? value.transactions : []).slice(0, 16).map((item) => {
+    const tx = item.transaction || {}
+    const meta = item.meta || {}
+    const message = tx.message || {}
+    const keys = Array.isArray(message.accountKeys) ? message.accountKeys.slice(0, 12) : []
+    return {
+      signature: Array.isArray(tx.signatures) ? tx.signatures[0] : null,
+      err: meta.err ?? null,
+      accounts: keys.map((key) => typeof key === 'string' ? key : (key.pubkey || null)),
+    }
+  })
+  return {
+    slot,
+    blockhash: value.blockhash ?? null,
+    parentSlot: value.parentSlot ?? null,
+    blockHeight: value.blockHeight ?? null,
+    blockTime: value.blockTime ?? null,
+    count: rows.length,
+    transactions: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function blockRewards(slotRaw) {
   const slot = parseSlot(slotRaw)
   const res = await rpc('getBlock', [slot, {
@@ -4908,6 +4954,10 @@ const PAID = {
     },
     run: async (url) => tokenAccountsByDelegateProgram(url.searchParams.get('delegate'), url.searchParams.get('program')),
   },
+  '/blka': {
+    validate(url) { parseSlot(url.searchParams.get('slot')) },
+    run: async (url) => blockAccountKeys(url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -5031,6 +5081,7 @@ function catalogResources() {
     { path: '/ownp', description: 'Live Solana token accounts for a wallet filtered by one token program' },
     { path: '/delm', description: 'Live Solana token accounts by approved delegate filtered by mint' },
     { path: '/delp', description: 'Live Solana token accounts by approved delegate filtered by one token program' },
+    { path: '/blka', description: 'Live Solana block transaction account keys for a slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -5214,6 +5265,7 @@ const server = createServer(async (req, res) => {
               { name: 'token_accounts_owner_program', description: 'Paid Solana token accounts for a wallet filtered by one token program. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, program: { type: 'string' } }, required: ['owner', 'program'] } },
               { name: 'token_accounts_delegate_mint', description: 'Paid Solana token accounts by approved delegate filtered by mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' }, mint: { type: 'string' } }, required: ['delegate', 'mint'] } },
               { name: 'token_accounts_delegate_program', description: 'Paid Solana token accounts by approved delegate filtered by one token program. 0.01 USDC.', inputSchema: { type: 'object', properties: { delegate: { type: 'string' }, program: { type: 'string' } }, required: ['delegate', 'program'] } },
+              { name: 'block_account_keys', description: 'Paid Solana block transaction account keys for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
             ],
           },
         })
@@ -5337,6 +5389,7 @@ const server = createServer(async (req, res) => {
         token_accounts_owner_program: '/ownp',
         token_accounts_delegate_mint: '/delm',
         token_accounts_delegate_program: '/delp',
+        block_account_keys: '/blka',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
