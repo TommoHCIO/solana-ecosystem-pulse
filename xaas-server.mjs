@@ -174,6 +174,7 @@ const ROUTE_PRICE = {
   '/jord': { usdc: '20000', sol: '20000000' },
   '/rcur': { usdc: '20000', sol: '20000000' },
   '/rdap': { usdc: '10000', sol: '10000000' },
+  '/nft': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1187,6 +1188,13 @@ const BAZAAR = {
     handle: null,
     events: [],
   }),
+  '/nft': bazaarExtension({
+    symbol: 'okay_bears',
+  }, {
+    symbol: 'okay_bears',
+    floorPriceSol: null,
+    listedCount: null,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1368,6 +1376,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/jord': 'Live Jupiter trigger orders for a required wallet and status',
         '/rcur': 'Live Jupiter recurring DCA orders for a required wallet and status',
         '/rdap': 'Live RDAP registration data for a required domain, IP, or ASN',
+        '/nft': 'Live Solana NFT collection floor and stats for a required Magic Eden symbol',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1687,7 +1696,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                                 ? ['solana', 'jupiter', 'recurring', 'dca']
                                                                                                                                                                                                                                                                                                                                 : path === '/rdap'
                                                                                                                                                                                                                                                                                                                                   ? ['dns', 'whois', 'rdap', 'domain']
-                                                                                                                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                                  : path === '/nft'
+                                                                                                                                                                                                                                                                                                                                    ? ['solana', 'nft', 'floor', 'collection']
+                                                                                                                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2947,6 +2958,49 @@ async function jupiterPerpTrades(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     trades: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function nftCollectionStats(symbolRaw) {
+  const symbol = requireText('symbol', symbolRaw)
+  if (!/^[a-z0-9_]{1,80}$/.test(symbol)) {
+    const err = new Error('symbol must be a Magic Eden collection symbol (a-z, 0-9, underscore)')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  const meUrl = 'https://api-mainnet.magiceden.dev/v2/collections/' + encodeURIComponent(symbol) + '/stats'
+  const res = await fetch(meUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  if (res.status === 404) {
+    const err = new Error('collection not found on Magic Eden')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  if (res.status === 429) {
+    const err = new Error('upstream rate limit; retry shortly')
+    err.status = 503
+    err.code = 'upstream_rate_limited'
+    throw err
+  }
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.symbol === undefined) {
+    const err = new Error('Magic Eden stats lookup failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const lamports = (v) => (v === null || v === undefined ? null : Number(v))
+  const toSol = (v) => (v === null || v === undefined ? null : Number(v) / 1e9)
+  return {
+    symbol: body.symbol,
+    floorPriceLamports: lamports(body.floorPrice),
+    floorPriceSol: toSol(body.floorPrice),
+    listedCount: body.listedCount ?? null,
+    avgPrice24hrSol: toSol(body.avgPrice24hr),
+    volume7dSol: toSol(body.volume7d),
+    source: 'magiceden',
     generatedAt: new Date().toISOString(),
   }
 }
@@ -7024,6 +7078,18 @@ const PAID = {
     },
     run: async (url) => rdapLookup(url.searchParams.get('kind'), url.searchParams.get('q')),
   },
+  '/nft': {
+    validate(url) {
+      const symbol = requireText('symbol', url.searchParams.get('symbol'))
+      if (!/^[a-z0-9_]{1,80}$/.test(symbol)) {
+        const err = new Error('symbol must be a Magic Eden collection symbol (a-z, 0-9, underscore)')
+        err.status = 400
+        err.code = 'invalid_param'
+        throw err
+      }
+    },
+    run: async (url) => nftCollectionStats(url.searchParams.get('symbol')),
+  },
 }
 
 function catalogResources() {
@@ -7191,6 +7257,7 @@ function catalogResources() {
     { path: '/jord', description: 'Live Jupiter trigger orders for a required wallet and status' },
     { path: '/rcur', description: 'Live Jupiter recurring DCA orders for a required wallet and status' },
     { path: '/rdap', description: 'Live RDAP registration data for a required domain, IP, or ASN' },
+    { path: '/nft', description: 'Live Solana NFT collection floor and stats for a required Magic Eden symbol' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7418,6 +7485,7 @@ const server = createServer(async (req, res) => {
               { name: 'jupiter_trigger_orders', description: 'Paid Jupiter trigger orders for a required wallet and status. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, status: { type: 'string' } }, required: ['address', 'status'] } },
               { name: 'jupiter_recurring_orders', description: 'Paid Jupiter recurring DCA orders for a required wallet and status. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, status: { type: 'string' } }, required: ['address', 'status'] } },
               { name: 'rdap_lookup', description: 'Paid RDAP registration data for a required domain, IP, or ASN. 0.01 USDC. kind=domain|ip|asn, q=value.', inputSchema: { type: 'object', properties: { kind: { type: 'string' }, q: { type: 'string' } }, required: ['kind', 'q'] } },
+              { name: 'nft_collection_stats', description: 'Paid Solana NFT collection floor and stats for a required Magic Eden symbol. 0.01 USDC.', inputSchema: { type: 'object', properties: { symbol: { type: 'string' } }, required: ['symbol'] } },
             ],
           },
         })
@@ -7585,6 +7653,7 @@ const server = createServer(async (req, res) => {
         jupiter_trigger_orders: '/jord',
         jupiter_recurring_orders: '/rcur',
         rdap_lookup: '/rdap',
+        nft_collection_stats: '/nft',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
