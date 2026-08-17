@@ -167,6 +167,7 @@ const ROUTE_PRICE = {
   '/perp': { usdc: '50000', sol: '50000000' },
   '/jpos': { usdc: '50000', sol: '50000000' },
   '/wrsk': { usdc: '20000', sol: '20000000' },
+  '/jtrd': { usdc: '50000', sol: '50000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1123,6 +1124,13 @@ const BAZAAR = {
     verdict: 'ok',
     flags: [],
   }),
+  '/jtrd': bazaarExtension({
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+  }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    count: 0,
+    trades: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1297,6 +1305,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/perp': 'Live Jupiter perpetual liquidity borrow and utilization for a required market mint',
         '/jpos': 'Live Jupiter perpetual positions for a required wallet address',
         '/wrsk': 'Scored Solana wallet risk from live balance activity and OFAC screen',
+        '/jtrd': 'Live Jupiter perpetual trade history for a required wallet address',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1602,7 +1611,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                   ? ['solana', 'jupiter', 'perps', 'positions']
                                                                                                                                                                                                                                                                                                                   : path === '/wrsk'
                                                                                                                                                                                                                                                                                                                     ? ['solana', 'wallet', 'risk', 'score']
-                                                                                                                                                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                    : path === '/jtrd'
+                                                                                                                                                                                                                                                                                                                      ? ['solana', 'jupiter', 'perps', 'trades']
+                                                                                                                                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2842,6 +2853,26 @@ async function jupiterPerpPositions(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     positions: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function jupiterPerpTrades(addressRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const tradeUrl = 'https://perps-api.jup.ag/v1/trades?walletAddress=' + encodeURIComponent(address)
+  const res = await fetch(tradeUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.code || body.error) {
+    const err = new Error(body.message || body.error || 'jupiter perp trades failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const rows = Array.isArray(body.dataList) ? body.dataList.slice(0, 20) : []
+  return {
+    address,
+    count: Number(body.count ?? rows.length),
+    trades: rows,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -6658,6 +6689,12 @@ const PAID = {
     },
     run: async (url) => walletRisk(url.searchParams.get('address')),
   },
+  '/jtrd': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+    },
+    run: async (url) => jupiterPerpTrades(url.searchParams.get('address')),
+  },
 }
 
 function catalogResources() {
@@ -6818,6 +6855,7 @@ function catalogResources() {
     { path: '/perp', description: 'Live Jupiter perpetual liquidity borrow and utilization for a required market mint' },
     { path: '/jpos', description: 'Live Jupiter perpetual positions for a required wallet address' },
     { path: '/wrsk', description: 'Scored Solana wallet risk from live balance activity and OFAC screen' },
+    { path: '/jtrd', description: 'Live Jupiter perpetual trade history for a required wallet address' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7038,6 +7076,7 @@ const server = createServer(async (req, res) => {
               { name: 'jupiter_perp_pool', description: 'Paid Jupiter perpetual liquidity, borrow, and utilization for SOL ETH or WBTC. 0.05 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'jupiter_perp_positions', description: 'Paid Jupiter perpetual positions for a required wallet address. 0.05 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'wallet_risk_score', description: 'Paid scored Solana wallet risk from live balance activity and OFAC screen. 0.02 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
+              { name: 'jupiter_perp_trades', description: 'Paid Jupiter perpetual trade history for a required wallet address. 0.05 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
             ],
           },
         })
@@ -7198,6 +7237,7 @@ const server = createServer(async (req, res) => {
         jupiter_perp_pool: '/perp',
         jupiter_perp_positions: '/jpos',
         wallet_risk_score: '/wrsk',
+        jupiter_perp_trades: '/jtrd',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
