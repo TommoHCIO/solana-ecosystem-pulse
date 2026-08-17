@@ -2,7 +2,12 @@
 
 No-API-key report on Solana network health, validators, economics, and a few live ecosystem signals.
 
-The code is free. A hosted snapshot refresh is a paid product: **0.25 SOL** to `4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA` via [Solana Pay](solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.25&label=Solana%20Ecosystem%20Pulse&message=Hosted%20snapshot). Live demo: https://tommohcio.github.io/solana-ecosystem-pulse/
+The code is free. Paid products, both to `4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA`:
+
+- Hosted snapshot refresh: **0.25 SOL** via [Solana Pay](solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.25&label=Solana%20Ecosystem%20Pulse&message=Hosted%20snapshot)
+- Unlocked Core NFT *Proof of Patience* (`ak8tRUa19LSMyTWv87DnhpbBvvCyqptFWUExyDj37FG`): **1 SOL** via [Solana Pay](solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=1&label=Proof%20of%20Patience&message=Buy%20unlocked%20Core%20NFT%20ak8tRUa19)
+
+Live demo: https://tommohcio.github.io/solana-ecosystem-pulse/
 
 ## What it produces
 
