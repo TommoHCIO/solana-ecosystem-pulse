@@ -7,26 +7,46 @@ const PORT = Number(process.env.PORT || 4021)
 const PAY_TO = '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA'
 const PRICE_LAMPORTS = '1000000'
 const PRICE_SOL = '0.001'
+const PRICE_USDC = '1000'
+const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
 const NETWORK = 'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp'
 const RPC = 'https://api.mainnet-beta.solana.com'
+const FACILITATOR = 'https://facilitator.payai.network'
 const CLAIM = 'FVt5ytSbkf2KX8X9wJFKSSXwL4C2LARU6J9kDQhsqfADU9sqnJ6Bxa2xCZx43fzocpArZVx5CYyq8N1iWsGuWNZ'
 const ROOT = dirname(fileURLToPath(import.meta.url))
+
+function usdcAccept() {
+  return {
+    scheme: 'exact',
+    network: NETWORK,
+    amount: PRICE_USDC,
+    asset: USDC,
+    payTo: PAY_TO,
+    maxTimeoutSeconds: 300,
+    extra: { feePayer: FEE_PAYER },
+  }
+}
+
+function solAccept() {
+  return {
+    scheme: 'exact',
+    network: NETWORK,
+    amount: PRICE_LAMPORTS,
+    asset: 'native',
+    payTo: PAY_TO,
+    maxTimeoutSeconds: 300,
+    extra: {
+      solanaPay: `solana:${PAY_TO}?amount=${PRICE_SOL}&label=Solana%20Pulse%20XaaS&message=paid-call`,
+    },
+  }
+}
 
 function paymentRequired() {
   return {
     x402Version: 2,
     error: 'PAYMENT_REQUIRED',
-    accepts: [{
-      scheme: 'exact',
-      network: NETWORK,
-      amount: PRICE_LAMPORTS,
-      asset: 'native',
-      payTo: PAY_TO,
-      maxTimeoutSeconds: 300,
-      extra: {
-        solanaPay: `solana:${PAY_TO}?amount=${PRICE_SOL}&label=Solana%20Pulse%20XaaS&message=paid-call`,
-      },
-    }],
+    accepts: [usdcAccept(), solAccept()],
   }
 }
 
@@ -43,7 +63,36 @@ async function rpc(method, params) {
   return res.json()
 }
 
-async function paymentOk(sig) {
+function decodeProof(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return null
+  try {
+    return JSON.parse(Buffer.from(text, 'base64').toString('utf8'))
+  } catch {
+    try { return JSON.parse(text) } catch { return { signature: text } }
+  }
+}
+
+async function facilitatorOk(proof) {
+  const paymentPayload = proof.paymentPayload || proof
+  const paymentRequirements = proof.paymentRequirements || usdcAccept()
+  const verify = await fetch(FACILITATOR + '/verify', {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ paymentPayload, paymentRequirements }),
+  })
+  const verified = await verify.json().catch(() => ({}))
+  if (verified.isValid !== true) return false
+  const settle = await fetch(FACILITATOR + '/settle', {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    body: JSON.stringify({ paymentPayload, paymentRequirements }),
+  })
+  const settled = await settle.json().catch(() => ({}))
+  return Boolean(settled.success || settled.transaction || settled.txHash)
+}
+
+async function nativeSolOk(sig) {
   if (!sig || sig === CLAIM) return false
   const status = await rpc('getSignatureStatuses', [[sig], { searchTransactionHistory: true }])
   const value = status.result?.value?.[0]
@@ -56,6 +105,16 @@ async function paymentOk(sig) {
   if (idx < 0) return false
   const delta = Number(meta.postBalances[idx] || 0) - Number(meta.preBalances[idx] || 0)
   return delta >= Number(PRICE_LAMPORTS)
+}
+
+async function paymentOk(raw) {
+  const proof = decodeProof(raw)
+  if (!proof) return false
+  if (proof.paymentPayload || proof.payload || proof.x402Version) {
+    try { if (await facilitatorOk(proof)) return true } catch { /* facilitator rejected payload */ }
+  }
+  const sig = proof.signature || proof.tx || (typeof raw === 'string' && raw.length > 40 ? raw : '')
+  return nativeSolOk(sig)
 }
 
 function json(res, status, body, extraHeaders = {}) {
@@ -159,7 +218,7 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {
         x402Version: 2,
         name: 'Solana Pulse XaaS',
-        description: 'Solana chain-data APIs for AI agents. Pay 0.001 SOL per call. Bazaar has Ethereum RPC wrappers; these fill the Solana gap.',
+        description: 'Solana chain-data APIs for AI agents. Pay 0.001 USDC on Solana via PayAI, or 0.001 native SOL. Bazaar has Ethereum RPC wrappers; these fill the Solana data gap.',
         payTo: PAY_TO,
         resources: catalogResources(),
       })
@@ -188,6 +247,7 @@ const server = createServer(async (req, res) => {
         name: 'Solana Pulse XaaS',
         payTo: PAY_TO,
         paid: Object.keys(PAID),
+        priceUsdc: '0.001',
         priceSol: PRICE_SOL,
         catalog: '/.well-known/x402.json',
         gap: 'CDP Bazaar top sellers are Ethereum RPC wrappers. Solana slot/balance/tx/token lookups are missing. These endpoints fill that gap.',

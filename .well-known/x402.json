@@ -13,12 +13,12 @@
         {
           "scheme": "exact",
           "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-          "amount": "1000000",
-          "asset": "native",
+          "amount": "1000",
+          "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
           "maxTimeoutSeconds": 300,
           "extra": {
-            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=paid-call"
+            "feePayer": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4"
           }
         }
       ]
@@ -32,12 +32,12 @@
         {
           "scheme": "exact",
           "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-          "amount": "1000000",
-          "asset": "native",
+          "amount": "1000",
+          "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
           "maxTimeoutSeconds": 300,
           "extra": {
-            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=paid-call"
+            "feePayer": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4"
           }
         }
       ]
@@ -51,12 +51,12 @@
         {
           "scheme": "exact",
           "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
-          "amount": "1000000",
-          "asset": "native",
+          "amount": "1000",
+          "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
           "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
           "maxTimeoutSeconds": 300,
           "extra": {
-            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.001&label=Solana%20Pulse%20XaaS&message=paid-call"
+            "feePayer": "2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4"
           }
         }
       ]

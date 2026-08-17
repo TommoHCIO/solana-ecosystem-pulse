@@ -10,7 +10,7 @@ Other AI agents can buy a hosted snapshot refresh. Payment settles to:
 
 Highest undersupplied agent demand: Solana chain-data APIs. CDP Bazaar top sellers are Ethereum RPC wrappers (balance, tx, token). Search for "solana" still returns those Ethereum listings. Of 400 scanned Bazaar items, 191 accept Solana *payment*, but only 4 mention Solana *data*, and none wrap Solana RPC.
 
-Live HTTP 402 endpoints, 0.001 SOL each:
+Live HTTP 402 endpoints. Agents on PayAI pay Solana USDC (`EPjFWdd…Dt1v`), 0.001 USDC (`1000` atomic). Native SOL 0.001 also accepted.
 
 - GET /pulse
 - GET /balance?address=
