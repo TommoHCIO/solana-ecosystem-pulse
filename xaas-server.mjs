@@ -102,6 +102,7 @@ const ROUTE_PRICE = {
   '/t22': { usdc: '10000', sol: '10000000' },
   '/circw': { usdc: '15000', sol: '15000000' },
   '/ldad': { usdc: '10000', sol: '10000000' },
+  '/tpu': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -634,6 +635,10 @@ const BAZAAR = {
     writable: [],
     readonly: [],
   }),
+  '/tpu': bazaarExtension({}, {
+    count: 0,
+    nodes: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -743,6 +748,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/t22': 'Live Solana Token-2022 accounts for a wallet',
         '/circw': 'Live Solana circulating largest native SOL accounts',
         '/ldad': 'Live Solana versioned transaction loaded addresses',
+        '/tpu': 'Live Solana cluster TPU gossip and RPC endpoints',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -918,7 +924,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                 ? ['solana', 'whales', 'circulating', 'sol']
                                                                                                                                                                                 : path === '/ldad'
                                                                                                                                                                                   ? ['solana', 'transaction', 'alt', 'loaded']
-                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                  : path === '/tpu'
+                                                                                                                                                                                    ? ['solana', 'cluster', 'tpu', 'gossip']
+                                                                                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2017,6 +2025,27 @@ async function clusterNodes() {
     rpc: nodes.filter((row) => Boolean(row.rpc)).length,
     gossip: nodes.filter((row) => Boolean(row.gossip)).length,
     tpu: nodes.filter((row) => Boolean(row.tpu)).length,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function clusterTpuEndpoints() {
+  const res = await rpc('getClusterNodes', [])
+  const nodes = (res.result || [])
+    .filter((row) => Boolean(row.tpu))
+    .slice(0, 16)
+    .map((row) => ({
+      pubkey: row.pubkey,
+      tpu: row.tpu || null,
+      tpuForwards: row.tpuForwards || null,
+      gossip: row.gossip || null,
+      rpc: row.rpc || null,
+      version: row.version || null,
+      shredVersion: row.shredVersion ?? null,
+    }))
+  return {
+    count: nodes.length,
+    nodes,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -3679,6 +3708,10 @@ const PAID = {
     validate(url) { requireSig('sig', url.searchParams.get('sig')) },
     run: async (url) => loadedAddresses(url.searchParams.get('sig')),
   },
+  '/tpu': {
+    validate() {},
+    run: async () => clusterTpuEndpoints(),
+  },
 }
 
 function catalogResources() {
@@ -3774,6 +3807,7 @@ function catalogResources() {
     { path: '/t22', description: 'Live Solana Token-2022 accounts for a wallet' },
     { path: '/circw', description: 'Live Solana circulating largest native SOL accounts' },
     { path: '/ldad', description: 'Live Solana versioned transaction loaded addresses' },
+    { path: '/tpu', description: 'Live Solana cluster TPU gossip and RPC endpoints' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3926,6 +3960,7 @@ const server = createServer(async (req, res) => {
               { name: 'token2022_accounts', description: 'Paid Solana Token-2022 accounts for a wallet. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' } }, required: ['owner'] } },
               { name: 'circulating_whales', description: 'Paid Solana circulating largest native SOL accounts. 0.015 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'loaded_addresses', description: 'Paid Solana versioned transaction loaded addresses. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
+              { name: 'cluster_tpu', description: 'Paid Solana cluster TPU gossip and RPC endpoints. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -4021,6 +4056,7 @@ const server = createServer(async (req, res) => {
         token2022_accounts: '/t22',
         circulating_whales: '/circw',
         loaded_addresses: '/ldad',
+        cluster_tpu: '/tpu',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
