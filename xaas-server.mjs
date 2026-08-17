@@ -178,6 +178,7 @@ const ROUTE_PRICE = {
   '/dex': { usdc: '10000', sol: '10000000' },
   '/peg': { usdc: '10000', sol: '10000000' },
   '/meta': { usdc: '5000', sol: '5000000' },
+  '/pfee': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1220,6 +1221,10 @@ const BAZAAR = {
     name: null,
     symbol: null,
   }),
+  '/pfee': bazaarExtension({}, {
+    recommendedMicroLamports: null,
+    levels: { low: null, medium: null, high: null, veryHigh: null },
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1405,6 +1410,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/dex': 'Live Solana token market data (price, liquidity, volume, change) for a required mint',
         '/peg': 'Live Solana stablecoin peg deviation and depeg verdict for a required mint',
         '/meta': 'Live Solana token identity (name, symbol, icon, decimals, supply) for a required mint',
+        '/pfee': 'Live Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh)',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1732,7 +1738,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                                         ? ['solana', 'stablecoin', 'peg', 'depeg']
                                                                                                                                                                                                                                                                                                                                         : path === '/meta'
                                                                                                                                                                                                                                                                                                                                           ? ['solana', 'token', 'metadata', 'identity']
-                                                                                                                                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                                          : path === '/pfee'
+                                                                                                                                                                                                                                                                                                                                            ? ['solana', 'priority-fee', 'gas', 'compute']
+                                                                                                                                                                                                                                                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     quote: 'Pay ' + (Number(price.usdc) / 1e6) + ' USDC or ' + (Number(price.sol) / 1e9)
@@ -2994,6 +3002,45 @@ async function jupiterPerpTrades(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     trades: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function priorityFeeRecommendation() {
+  const res = await fetch('https://api.mainnet-beta.solana.com', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getRecentPrioritizationFees', params: [[]] }),
+    signal: AbortSignal.timeout(15000),
+  })
+  const body = await res.json().catch(() => ({}))
+  const rows = Array.isArray(body.result) ? body.result : null
+  if (!res.ok || !rows) {
+    const err = new Error('priority fee lookup failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const fees = rows.map((r) => Number(r.prioritizationFee)).filter((n) => Number.isFinite(n)).sort((a, b) => a - b)
+  if (fees.length === 0) {
+    return {
+      sampleSlots: 0,
+      recommendedMicroLamports: 0,
+      levels: { low: 0, medium: 0, high: 0, veryHigh: 0 },
+      note: 'No recent prioritization-fee observations; network uncongested.',
+      generatedAt: new Date().toISOString(),
+    }
+  }
+  const pct = (p) => fees[Math.min(fees.length - 1, Math.floor((p / 100) * fees.length))]
+  const levels = { low: pct(25), medium: pct(50), high: pct(75), veryHigh: pct(95) }
+  return {
+    sampleSlots: fees.length,
+    minMicroLamports: fees[0],
+    maxMicroLamports: fees[fees.length - 1],
+    recommendedMicroLamports: levels.high,
+    levels,
+    unit: 'microLamports_per_compute_unit',
+    source: 'getRecentPrioritizationFees',
     generatedAt: new Date().toISOString(),
   }
 }
@@ -7258,6 +7305,10 @@ const PAID = {
     },
     run: async (url) => tokenMeta(url.searchParams.get('mint')),
   },
+  '/pfee': {
+    validate() {},
+    run: async () => priorityFeeRecommendation(),
+  },
 }
 
 function catalogResources() {
@@ -7429,6 +7480,7 @@ function catalogResources() {
     { path: '/dex', description: 'Live Solana token market data (price, liquidity, volume, change) for a required mint' },
     { path: '/peg', description: 'Live Solana stablecoin peg deviation and depeg verdict for a required mint' },
     { path: '/meta', description: 'Live Solana token identity (name, symbol, icon, decimals, supply) for a required mint' },
+    { path: '/pfee', description: 'Live Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh)' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7660,6 +7712,7 @@ const server = createServer(async (req, res) => {
               { name: 'dex_token_market', description: 'Paid Solana token market data (price, liquidity, 24h volume, price change) for a required mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'stablecoin_peg', description: 'Paid Solana stablecoin peg deviation (bps from $1) and depeg verdict for a required mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'token_meta', description: 'Paid Solana token identity (name, symbol, icon, decimals, supply, verification) for a required mint. 0.005 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'priority_fee', description: 'Paid Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh microLamports per compute unit). 0.005 USDC.', inputSchema: { type: 'object', properties: {}, required: [] } },
             ],
           },
         })
@@ -7831,6 +7884,7 @@ const server = createServer(async (req, res) => {
         dex_token_market: '/dex',
         stablecoin_peg: '/peg',
         token_meta: '/meta',
+        priority_fee: '/pfee',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
