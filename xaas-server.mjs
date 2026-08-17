@@ -70,6 +70,7 @@ const ROUTE_PRICE = {
   '/batch': { usdc: '10000', sol: '10000000' },
   '/tab': { usdc: '5000', sol: '5000000' },
   '/blks': { usdc: '5000', sol: '5000000' },
+  '/stat': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -440,6 +441,11 @@ const BAZAAR = {
     count: 11,
     slots: [],
   }),
+  '/stat': bazaarExtension({ sigs: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW' }, {
+    count: 1,
+    found: 0,
+    statuses: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -517,6 +523,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/batch': 'Live Solana getMultipleAccounts batch lookup',
         '/tab': 'Live Solana SPL token-account balance',
         '/blks': 'Live Solana confirmed block slots in a range',
+        '/stat': 'Live Solana transaction confirmation statuses',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -628,7 +635,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                 ? ['solana', 'spl', 'token', 'balance']
                                                                                                                 : path === '/blks'
                                                                                                                   ? ['solana', 'blocks', 'range', 'slots']
-                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                  : path === '/stat'
+                                                                                                                    ? ['solana', 'tx', 'status', 'confirm']
+                                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -639,6 +648,54 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
 
 function encodeHeader(obj) {
   return Buffer.from(JSON.stringify(obj)).toString('base64')
+}
+
+function isSig(value) {
+  return typeof value === 'string' && /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(value)
+}
+
+function parseSigs(raw) {
+  const items = String(raw || '').split(',').map((part) => part.trim()).filter(Boolean)
+  if (items.length === 0) {
+    const err = new Error('sigs query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  if (items.length > 20) {
+    const err = new Error('sigs accepts at most 20 signatures')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  for (const item of items) {
+    if (!isSig(item)) {
+      const err = new Error('sigs must be comma-separated base58 transaction signatures')
+      err.status = 400
+      err.code = 'invalid_param'
+      throw err
+    }
+  }
+  return items
+}
+
+async function signatureStatuses(raw) {
+  const sigs = parseSigs(raw)
+  const res = await rpc('getSignatureStatuses', [sigs, { searchTransactionHistory: true }])
+  const rows = (res.result?.value || []).map((item, index) => ({
+    signature: sigs[index],
+    found: Boolean(item),
+    slot: item?.slot ?? null,
+    confirmations: item?.confirmations ?? null,
+    confirmationStatus: item?.confirmationStatus ?? null,
+    err: item?.err ?? null,
+  }))
+  return {
+    count: rows.length,
+    found: rows.filter((row) => row.found).length,
+    statuses: rows,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 function parseAddresses(raw) {
@@ -2230,6 +2287,10 @@ const PAID = {
     validate(url) { parseBlockRange(url.searchParams.get('start'), url.searchParams.get('end')) },
     run: async (url) => confirmedBlocks(url.searchParams.get('start'), url.searchParams.get('end')),
   },
+  '/stat': {
+    validate(url) { parseSigs(url.searchParams.get('sigs')) },
+    run: async (url) => signatureStatuses(url.searchParams.get('sigs')),
+  },
 }
 
 function catalogResources() {
@@ -2293,6 +2354,7 @@ function catalogResources() {
     { path: '/batch', description: 'Live Solana getMultipleAccounts batch lookup' },
     { path: '/tab', description: 'Live Solana SPL token-account balance' },
     { path: '/blks', description: 'Live Solana confirmed block slots in a range' },
+    { path: '/stat', description: 'Live Solana transaction confirmation statuses' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2413,6 +2475,7 @@ const server = createServer(async (req, res) => {
               { name: 'multiple_accounts', description: 'Paid Solana getMultipleAccounts batch lookup. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' } }, required: ['addresses'] } },
               { name: 'token_account_balance', description: 'Paid Solana SPL token-account balance. 0.005 USDC.', inputSchema: { type: 'object', properties: { account: { type: 'string' } }, required: ['account'] } },
               { name: 'confirmed_blocks', description: 'Paid Solana getBlocks confirmed slot range. 0.005 USDC.', inputSchema: { type: 'object', properties: { start: { type: 'string' }, end: { type: 'string' } }, required: ['start'] } },
+              { name: 'signature_statuses', description: 'Paid Solana getSignatureStatuses confirmation check. 0.005 USDC.', inputSchema: { type: 'object', properties: { sigs: { type: 'string' } }, required: ['sigs'] } },
             ],
           },
         })
@@ -2476,6 +2539,7 @@ const server = createServer(async (req, res) => {
         multiple_accounts: '/batch',
         token_account_balance: '/tab',
         confirmed_blocks: '/blks',
+        signature_statuses: '/stat',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
