@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import tls from 'node:tls'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -25,6 +26,7 @@ const ROUTE_PRICE = {
   '/sigs': { usdc: '10000', sol: '10000000' },
   '/account': { usdc: '10000', sol: '10000000' },
   '/holders': { usdc: '15000', sol: '15000000' },
+  '/tls': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -197,6 +199,12 @@ const BAZAAR = {
     count: 20,
     holders: [],
   }),
+  '/tls': bazaarExtension({ host: 'tommohcio.github.io' }, {
+    host: 'tommohcio.github.io',
+    valid: true,
+    daysLeft: 80,
+    issuer: 'Let\'s Encrypt',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -231,6 +239,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/sigs': 'Recent signatures for a Solana address',
         '/account': 'Parsed Solana account info for any address',
         '/holders': 'Largest token accounts for a Solana mint',
+        '/tls': 'TLS certificate expiry and issuer for a public host',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -256,7 +265,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                           ? ['account', 'parsed', 'solana', 'rpc']
                           : path === '/holders'
                             ? ['holders', 'mint', 'solana', 'whales']
-                            : ['solana', 'rpc', 'balance', 'chain-data'],
+                            : path === '/tls'
+                              ? ['tls', 'ssl', 'certificate', 'security']
+                              : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -568,6 +579,60 @@ async function extractPage(target) {
   }
 }
 
+function requireHost(name, value) {
+  const host = requireText(name, value).replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].toLowerCase()
+  if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(host)) {
+    const err = new Error(name + ' must be a public hostname')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return host
+}
+
+function tlsCheck(host) {
+  return new Promise((resolve, reject) => {
+    const socket = tls.connect({ host, port: 443, servername: host, timeout: 12000 }, () => {
+      const cert = socket.getPeerCertificate()
+      socket.end()
+      if (!cert || !cert.valid_to) {
+        const err = new Error('no certificate')
+        err.status = 502
+        err.code = 'upstream_error'
+        reject(err)
+        return
+      }
+      const expires = new Date(cert.valid_to)
+      const daysLeft = Math.floor((expires.getTime() - Date.now()) / 86400000)
+      resolve({
+        host,
+        valid: socket.authorized !== false && daysLeft >= 0,
+        authorized: socket.authorized === true,
+        daysLeft,
+        validFrom: cert.valid_from,
+        validTo: cert.valid_to,
+        issuer: cert.issuer?.O || cert.issuer?.CN || null,
+        subject: cert.subject?.CN || host,
+        altNames: String(cert.subjectaltname || '').replace(/DNS:/g, '').split(', ').filter(Boolean).slice(0, 20),
+        generatedAt: new Date().toISOString(),
+      })
+    })
+    socket.on('error', (error) => {
+      const err = new Error(error.message || 'tls connect failed')
+      err.status = 502
+      err.code = 'upstream_error'
+      reject(err)
+    })
+    socket.on('timeout', () => {
+      socket.destroy()
+      const err = new Error('tls timeout')
+      err.status = 504
+      err.code = 'upstream_error'
+      reject(err)
+    })
+  })
+}
+
 async function tokenHolders(mint) {
   const res = await rpc('getTokenLargestAccounts', [mint])
   const holders = (res.result?.value || []).map((row) => ({
@@ -798,6 +863,10 @@ const PAID = {
     validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
     run: async (url) => tokenHolders(url.searchParams.get('mint')),
   },
+  '/tls': {
+    validate(url) { requireHost('host', url.searchParams.get('host')) },
+    run: async (url) => tlsCheck(requireHost('host', url.searchParams.get('host'))),
+  },
 }
 
 function catalogResources() {
@@ -818,6 +887,7 @@ function catalogResources() {
     { path: '/sigs', description: 'Recent signatures for a Solana address. Query: address, optional limit' },
     { path: '/account', description: 'Parsed Solana account info. Query: address' },
     { path: '/holders', description: 'Largest token accounts for a mint. Query: mint' },
+    { path: '/tls', description: 'TLS certificate expiry and issuer. Query: host' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -895,6 +965,7 @@ const server = createServer(async (req, res) => {
               { name: 'recent_sigs', description: 'Paid recent Solana signatures for an address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' }, limit: { type: 'string' } }, required: ['address'] } },
               { name: 'account_info', description: 'Paid parsed Solana account info. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
               { name: 'token_holders', description: 'Paid largest Solana token accounts for a mint. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'tls_check', description: 'Paid TLS certificate expiry check for a public host. 0.01 USDC.', inputSchema: { type: 'object', properties: { host: { type: 'string' } }, required: ['host'] } },
             ],
           },
         })
@@ -915,6 +986,7 @@ const server = createServer(async (req, res) => {
         recent_sigs: '/sigs',
         account_info: '/account',
         token_holders: '/holders',
+        tls_check: '/tls',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
