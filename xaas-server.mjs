@@ -93,6 +93,7 @@ const ROUTE_PRICE = {
   '/ata': { usdc: '10000', sol: '10000000' },
   '/jts': { usdc: '10000', sol: '10000000' },
   '/gpm': { usdc: '15000', sol: '15000000' },
+  '/logs': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -587,6 +588,11 @@ const BAZAAR = {
     count: 0,
     accounts: [],
   }),
+  '/logs': bazaarExtension({ sig: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW' }, {
+    err: null,
+    computeUnits: 0,
+    logs: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -687,6 +693,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/ata': 'Live Solana associated token account address and existence',
         '/jts': 'Live Jupiter token search by name symbol or mint',
         '/gpm': 'Live Solana getProgramAccounts filtered by memcmp',
+        '/logs': 'Live Solana transaction program logs compute and error',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -844,7 +851,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                                                                               ? ['solana', 'jupiter', 'token', 'search']
                                                                                                                                                               : path === '/gpm'
                                                                                                                                                                 ? ['solana', 'gpa', 'memcmp', 'filter']
-                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                : path === '/logs'
+                                                                                                                                                                  ? ['solana', 'transaction', 'logs', 'compute']
+                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1279,6 +1288,29 @@ async function parsedTransfers(sigRaw) {
     fee: meta.fee ?? 0,
     sol,
     tokens,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function transactionLogs(sigRaw) {
+  const sig = requireSig('sig', sigRaw)
+  const tx = await rpc('getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }])
+  if (!tx.result) {
+    const err = new Error('transaction not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  const meta = tx.result.meta || {}
+  const logs = Array.isArray(meta.logMessages) ? meta.logMessages.slice(0, 16) : []
+  return {
+    sig,
+    slot: tx.result.slot ?? null,
+    err: meta.err ?? null,
+    fee: meta.fee ?? 0,
+    computeUnits: meta.computeUnitsConsumed ?? null,
+    logCount: Array.isArray(meta.logMessages) ? meta.logMessages.length : 0,
+    logs,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -3312,6 +3344,10 @@ const PAID = {
     },
     run: async (url) => programAccountsMemcmp(url.searchParams.get('program'), url.searchParams.get('offset'), url.searchParams.get('bytes')),
   },
+  '/logs': {
+    validate(url) { requireSig('sig', url.searchParams.get('sig')) },
+    run: async (url) => transactionLogs(url.searchParams.get('sig')),
+  },
 }
 
 function catalogResources() {
@@ -3398,6 +3434,7 @@ function catalogResources() {
     { path: '/ata', description: 'Live Solana associated token account address and existence' },
     { path: '/jts', description: 'Live Jupiter token search by name symbol or mint' },
     { path: '/gpm', description: 'Live Solana getProgramAccounts filtered by memcmp' },
+    { path: '/logs', description: 'Live Solana transaction program logs compute and error' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -3541,6 +3578,7 @@ const server = createServer(async (req, res) => {
               { name: 'associated_token_account', description: 'Paid Solana ATA derive and existence check. 0.01 USDC.', inputSchema: { type: 'object', properties: { owner: { type: 'string' }, mint: { type: 'string' } }, required: ['owner', 'mint'] } },
               { name: 'jupiter_token_search', description: 'Paid Jupiter token search by name symbol or mint. 0.01 USDC.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
               { name: 'program_accounts_memcmp', description: 'Paid Solana getProgramAccounts filtered by memcmp. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, offset: { type: 'string' }, bytes: { type: 'string' } }, required: ['program', 'offset', 'bytes'] } },
+              { name: 'transaction_logs', description: 'Paid Solana transaction program logs and compute. 0.01 USDC.', inputSchema: { type: 'object', properties: { sig: { type: 'string' } }, required: ['sig'] } },
             ],
           },
         })
@@ -3627,6 +3665,7 @@ const server = createServer(async (req, res) => {
         associated_token_account: '/ata',
         jupiter_token_search: '/jts',
         program_accounts_memcmp: '/gpm',
+        transaction_logs: '/logs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
