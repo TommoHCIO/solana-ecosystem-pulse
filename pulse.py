@@ -292,6 +292,12 @@ def write_html(snap: dict) -> str:
       <tbody id="validators"></tbody>
     </table>
     <p class="muted">Official page: <a href="https://solana.com/data">solana.com/data</a>. Refresh by rerunning <code>python pulse.py</code>.</p>
+    <section class="card">
+      <div class="label">Buy a hosted snapshot</div>
+      <p>Pay 0.25 SOL for a private hosted refresh of this dashboard. Open-source code stays free.</p>
+      <p><a href="solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.25&amp;label=Solana%20Ecosystem%20Pulse&amp;message=Hosted%20snapshot">Pay 0.25 SOL</a></p>
+      <p class="muted">Recipient <code>4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA</code></p>
+    </section>
   </main>
   <script>
     const snap = {payload};
