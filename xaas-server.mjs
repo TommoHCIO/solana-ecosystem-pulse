@@ -1724,6 +1724,8 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                                         : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
+    quote: 'Pay ' + (Number(price.usdc) / 1e6) + ' USDC or ' + (Number(price.sol) / 1e9)
+      + ' SOL per call over x402 on Solana. Free unpaid sample at ' + origin + '/sample.',
     extensions: {
       bazaar: BAZAAR[path] || BAZAAR['/pulse'],
     },
