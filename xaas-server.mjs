@@ -527,6 +527,60 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/llms.txt') {
       return sendFile(res, join(ROOT, 'llms.txt'), 'text/plain; charset=utf-8')
     }
+    if (url.pathname === '/mcp' && req.method === 'POST') {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      let body = {}
+      try { body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') } catch { body = {} }
+      const id = body.id ?? 1
+      if (body.method === 'initialize') {
+        return json(res, 200, {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            protocolVersion: '2024-11-05',
+            capabilities: { tools: {} },
+            serverInfo: { name: 'solana-pulse-xaas', version: '0.26.0' },
+          },
+        })
+      }
+      if (body.method === 'tools/list') {
+        return json(res, 200, {
+          jsonrpc: '2.0',
+          id,
+          result: {
+            tools: [
+              { name: 'sample_pulse', description: 'Free live Solana slot/epoch sample', inputSchema: { type: 'object', properties: {} } },
+              { name: 'jupiter_quote', description: 'Paid Jupiter swap quote. 0.01 USDC.', inputSchema: { type: 'object', properties: { inputMint: { type: 'string' }, outputMint: { type: 'string' }, amount: { type: 'string' } }, required: ['inputMint', 'outputMint', 'amount'] } },
+              { name: 'license_scan', description: 'Paid license heuristic. 0.10 USDC.', inputSchema: { type: 'object', properties: { packages: { type: 'string' } }, required: ['packages'] } },
+              { name: 'install_preflight', description: 'Paid install-safety heuristic. 0.15 USDC.', inputSchema: { type: 'object', properties: { packages: { type: 'string' } }, required: ['packages'] } },
+            ],
+          },
+        })
+      }
+      if (body.method === 'tools/call' && body.params?.name === 'sample_pulse') {
+        return json(res, 200, { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(await latestPulse()) }] } })
+      }
+      const paidTool = {
+        jupiter_quote: '/quote',
+        license_scan: '/license',
+        install_preflight: '/preflight',
+      }[body.params?.name]
+      if (body.method === 'tools/call' && paidTool) {
+        const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
+        return json(res, 402, required, { 'PAYMENT-REQUIRED': encodeHeader(required) })
+      }
+      return json(res, 200, { jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } })
+    }
+    if (url.pathname === '/.well-known/mcp.json' || url.pathname === '/mcp') {
+      return json(res, 200, {
+        name: 'solana-pulse-xaas',
+        description: 'Solana quotes and package preflight for agents. Free /sample. Paid Jupiter quote 0.01 USDC, license 0.10, preflight 0.15.',
+        transport: 'http',
+        url: 'https://lobby-laptop-shame-achieved.trycloudflare.com/mcp',
+        payTo: PAY_TO,
+      })
+    }
     if (url.pathname === '/sample') {
       return json(res, 200, {
         free: true,
