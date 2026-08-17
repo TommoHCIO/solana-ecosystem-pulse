@@ -64,6 +64,7 @@ const ROUTE_PRICE = {
   '/epi': { usdc: '5000', sol: '5000000' },
   '/gov': { usdc: '5000', sol: '5000000' },
   '/valid': { usdc: '5000', sol: '5000000' },
+  '/sched': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -402,6 +403,11 @@ const BAZAAR = {
     blockhash: '11111111111111111111111111111111',
     valid: false,
   }),
+  '/sched': bazaarExtension({}, {
+    leaders: 1200,
+    slotsAssigned: 432000,
+    topSlots: 2000,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -473,6 +479,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/epi': 'Live Solana current epoch progress',
         '/gov': 'Live Solana inflation governor parameters',
         '/valid': 'Check whether a Solana blockhash is still valid',
+        '/sched': 'Live Solana current-epoch leader schedule summary',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -572,7 +579,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                     ? ['solana', 'inflation', 'governor', 'taper']
                                                                                                     : path === '/valid'
                                                                                                       ? ['solana', 'blockhash', 'valid', 'expiry']
-                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                      : path === '/sched'
+                                                                                                        ? ['solana', 'leader', 'schedule', 'epoch']
+                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1003,6 +1012,24 @@ async function firstAvailableBlock() {
   const res = await rpc('getFirstAvailableBlock', [])
   return {
     firstAvailableBlock: res.result,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function leaderSchedule() {
+  const res = await rpc('getLeaderSchedule', [])
+  const map = res.result && typeof res.result === 'object' ? res.result : {}
+  const rows = Object.entries(map).map(([identity, slots]) => ({
+    identity,
+    slots: Array.isArray(slots) ? slots.length : 0,
+  }))
+  rows.sort((a, b) => b.slots - a.slots)
+  const slotsAssigned = rows.reduce((sum, row) => sum + row.slots, 0)
+  return {
+    leaders: rows.length,
+    slotsAssigned,
+    topSlots: rows[0]?.slots ?? 0,
+    top: rows.slice(0, 8),
     generatedAt: new Date().toISOString(),
   }
 }
@@ -1980,6 +2007,10 @@ const PAID = {
     validate(url) { requirePubkey('blockhash', url.searchParams.get('blockhash')) },
     run: async (url) => blockhashValid(url.searchParams.get('blockhash')),
   },
+  '/sched': {
+    validate() {},
+    run: async () => leaderSchedule(),
+  },
 }
 
 function catalogResources() {
@@ -2037,6 +2068,7 @@ function catalogResources() {
     { path: '/epi', description: 'Live Solana current epoch progress' },
     { path: '/gov', description: 'Live Solana inflation governor parameters' },
     { path: '/valid', description: 'Check whether a Solana blockhash is still valid' },
+    { path: '/sched', description: 'Live Solana current-epoch leader schedule summary' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2151,6 +2183,7 @@ const server = createServer(async (req, res) => {
               { name: 'epoch_info', description: 'Paid Solana current epoch progress. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'inflation_governor', description: 'Paid Solana inflation governor parameters. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'blockhash_valid', description: 'Paid Solana isBlockhashValid check. 0.005 USDC.', inputSchema: { type: 'object', properties: { blockhash: { type: 'string' } }, required: ['blockhash'] } },
+              { name: 'leader_schedule', description: 'Paid Solana current-epoch leader schedule summary. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -2208,6 +2241,7 @@ const server = createServer(async (req, res) => {
         epoch_info: '/epi',
         inflation_governor: '/gov',
         blockhash_valid: '/valid',
+        leader_schedule: '/sched',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
