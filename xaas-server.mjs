@@ -69,6 +69,7 @@ const ROUTE_PRICE = {
   '/btime': { usdc: '5000', sol: '5000000' },
   '/batch': { usdc: '10000', sol: '10000000' },
   '/tab': { usdc: '5000', sol: '5000000' },
+  '/blks': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -433,6 +434,12 @@ const BAZAAR = {
     decimals: 6,
     uiAmount: '0',
   }),
+  '/blks': bazaarExtension({ start: '439000000', end: '439000010' }, {
+    start: 439000000,
+    end: 439000010,
+    count: 11,
+    slots: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -509,6 +516,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/btime': 'Live Solana estimated production time for a slot',
         '/batch': 'Live Solana getMultipleAccounts batch lookup',
         '/tab': 'Live Solana SPL token-account balance',
+        '/blks': 'Live Solana confirmed block slots in a range',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -618,7 +626,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                               ? ['solana', 'accounts', 'batch', 'lookup']
                                                                                                               : path === '/tab'
                                                                                                                 ? ['solana', 'spl', 'token', 'balance']
-                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                : path === '/blks'
+                                                                                                                  ? ['solana', 'blocks', 'range', 'slots']
+                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1304,6 +1314,50 @@ function parseSlot(slotRaw) {
     throw err
   }
   return slot
+}
+
+function parseOptionalSlot(name, raw) {
+  if (raw === null || raw === '') return null
+  const slot = Number(raw)
+  if (!Number.isInteger(slot) || slot < 0) {
+    const err = new Error(name + ' must be a non-negative integer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return slot
+}
+
+function parseBlockRange(startRaw, endRaw) {
+  const start = parseSlot(startRaw)
+  const end = parseOptionalSlot('end', endRaw)
+  if (end !== null && end < start) {
+    const err = new Error('end must be greater than or equal to start')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  if (end !== null && end - start > 50) {
+    const err = new Error('range accepts at most 51 slots')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return { start, end }
+}
+
+async function confirmedBlocks(startRaw, endRaw) {
+  const { start, end } = parseBlockRange(startRaw, endRaw)
+  const params = end === null ? [start] : [start, end]
+  const res = await rpc('getBlocks', params)
+  const slots = Array.isArray(res.result) ? res.result : []
+  return {
+    start,
+    end: end === null ? slots[slots.length - 1] ?? start : end,
+    count: slots.length,
+    slots,
+    generatedAt: new Date().toISOString(),
+  }
 }
 
 async function blockTime(slotRaw) {
@@ -2172,6 +2226,10 @@ const PAID = {
     validate(url) { requirePubkey('account', url.searchParams.get('account')) },
     run: async (url) => tokenAccountBalance(url.searchParams.get('account')),
   },
+  '/blks': {
+    validate(url) { parseBlockRange(url.searchParams.get('start'), url.searchParams.get('end')) },
+    run: async (url) => confirmedBlocks(url.searchParams.get('start'), url.searchParams.get('end')),
+  },
 }
 
 function catalogResources() {
@@ -2234,6 +2292,7 @@ function catalogResources() {
     { path: '/btime', description: 'Live Solana estimated production time for a slot' },
     { path: '/batch', description: 'Live Solana getMultipleAccounts batch lookup' },
     { path: '/tab', description: 'Live Solana SPL token-account balance' },
+    { path: '/blks', description: 'Live Solana confirmed block slots in a range' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2353,6 +2412,7 @@ const server = createServer(async (req, res) => {
               { name: 'block_time', description: 'Paid Solana getBlockTime for a slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'multiple_accounts', description: 'Paid Solana getMultipleAccounts batch lookup. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' } }, required: ['addresses'] } },
               { name: 'token_account_balance', description: 'Paid Solana SPL token-account balance. 0.005 USDC.', inputSchema: { type: 'object', properties: { account: { type: 'string' } }, required: ['account'] } },
+              { name: 'confirmed_blocks', description: 'Paid Solana getBlocks confirmed slot range. 0.005 USDC.', inputSchema: { type: 'object', properties: { start: { type: 'string' }, end: { type: 'string' } }, required: ['start'] } },
             ],
           },
         })
@@ -2415,6 +2475,7 @@ const server = createServer(async (req, res) => {
         block_time: '/btime',
         multiple_accounts: '/batch',
         token_account_balance: '/tab',
+        confirmed_blocks: '/blks',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
