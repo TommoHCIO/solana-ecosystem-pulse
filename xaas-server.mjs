@@ -39,6 +39,7 @@ const ROUTE_PRICE = {
   '/fees': { usdc: '10000', sol: '10000000' },
   '/supply': { usdc: '10000', sol: '10000000' },
   '/tax': { usdc: '15000', sol: '15000000' },
+  '/tps': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -272,6 +273,10 @@ const BAZAAR = {
     transferFeeBps: 0,
     token2022: false,
   }),
+  '/tps': bazaarExtension({}, {
+    tps: 2500,
+    samples: 5,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -318,6 +323,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/fees': 'Live Solana prioritization fee snapshot',
         '/supply': 'Current SPL token supply for a mint',
         '/tax': 'Token-2022 transfer-fee config for a mint',
+        '/tps': 'Live Solana TPS from recent performance samples',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -367,7 +373,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                   ? ['solana', 'supply', 'mint', 'token']
                                                   : path === '/tax'
                                                     ? ['solana', 'token-2022', 'transfer-fee', 'tax']
-                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                    : path === '/tps'
+                                                      ? ['solana', 'tps', 'performance', 'cluster']
+                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -755,6 +763,20 @@ const LANG_BY_CODE = {
 }
 
 const TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
+
+async function clusterTps() {
+  const res = await rpc('getRecentPerformanceSamples', [5])
+  const samples = (res.result || []).map((row) => ({
+    slot: row.slot,
+    numTransactions: row.numTransactions,
+    samplePeriodSecs: row.samplePeriodSecs,
+    tps: row.samplePeriodSecs ? Number((row.numTransactions / row.samplePeriodSecs).toFixed(2)) : 0,
+  }))
+  const tps = samples.length
+    ? Number((samples.reduce((sum, row) => sum + row.tps, 0) / samples.length).toFixed(2))
+    : 0
+  return { tps, samples, generatedAt: new Date().toISOString() }
+}
 
 async function transferFee(mint) {
   const res = await rpc('getAccountInfo', [mint, { encoding: 'jsonParsed', commitment: 'confirmed' }])
@@ -1388,6 +1410,10 @@ const PAID = {
     validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
     run: async (url) => transferFee(url.searchParams.get('mint')),
   },
+  '/tps': {
+    validate() {},
+    run: async () => clusterTps(),
+  },
 }
 
 function catalogResources() {
@@ -1420,6 +1446,7 @@ function catalogResources() {
     { path: '/fees', description: 'Live Solana prioritization fee snapshot' },
     { path: '/supply', description: 'Current SPL token supply. Query: mint' },
     { path: '/tax', description: 'Token-2022 transfer-fee config. Query: mint' },
+    { path: '/tps', description: 'Live Solana TPS from recent performance samples' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -1509,6 +1536,7 @@ const server = createServer(async (req, res) => {
               { name: 'priority_fees', description: 'Paid Solana prioritization fee snapshot. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'token_supply', description: 'Paid SPL token supply. 0.01 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'transfer_fee', description: 'Paid Token-2022 transfer-fee lookup. 0.015 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'cluster_tps', description: 'Paid Solana TPS snapshot. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -1541,6 +1569,7 @@ const server = createServer(async (req, res) => {
         priority_fees: '/fees',
         token_supply: '/supply',
         transfer_fee: '/tax',
+        cluster_tps: '/tps',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
