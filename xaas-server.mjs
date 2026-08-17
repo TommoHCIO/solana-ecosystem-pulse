@@ -19,6 +19,7 @@ const ROUTE_PRICE = {
   '/extract': { usdc: '20000', sol: '20000000' },
   '/search': { usdc: '10000', sol: '10000000' },
   '/screen': { usdc: '10000', sol: '10000000' },
+  '/risk': { usdc: '20000', sol: '20000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -160,6 +161,13 @@ const BAZAAR = {
     verdict: 'clear',
     sources: ['ofac-sdn'],
   }),
+  '/risk': bazaarExtension({ mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }, {
+    mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    mintAuthority: null,
+    freezeAuthority: null,
+    topHolderPct: 12.4,
+    verdict: 'ok',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -188,6 +196,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/extract': 'Fetch a public URL and return title plus plain text',
         '/search': 'Web search results for a query',
         '/screen': 'OFAC SDN screen for a Solana wallet address',
+        '/risk': 'Mint/freeze authority and holder-concentration risk for a Solana mint',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -201,7 +210,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
               ? ['search', 'web', 'ddg']
               : path === '/screen'
                 ? ['ofac', 'sanctions', 'screen', 'solana']
-                : ['solana', 'rpc', 'balance', 'chain-data'],
+                : path === '/risk'
+                  ? ['risk', 'mint', 'solana', 'token']
+                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -513,6 +524,41 @@ async function extractPage(target) {
   }
 }
 
+async function mintRisk(mint) {
+  const supply = await rpc('getTokenSupply', [mint])
+  const largest = await rpc('getTokenLargestAccounts', [mint])
+  const accounts = await rpc('getMultipleAccounts', [[mint], { encoding: 'jsonParsed' }])
+  const parsed = accounts.result?.value?.[0]?.data?.parsed?.info || {}
+  const mintAuthority = parsed.mintAuthority || null
+  const freezeAuthority = parsed.freezeAuthority || null
+  const uiSupply = Number(supply.result?.value?.uiAmountString || 0)
+  const holders = (largest.result?.value || []).map((row) => ({
+    address: row.address,
+    amount: row.uiAmountString,
+  }))
+  const top = Number(holders[0]?.amount || 0)
+  const topHolderPct = uiSupply > 0 ? Number(((top / uiSupply) * 100).toFixed(2)) : null
+  const flags = []
+  if (mintAuthority) flags.push('mint_authority_live')
+  if (freezeAuthority) flags.push('freeze_authority_live')
+  if (topHolderPct != null && topHolderPct >= 50) flags.push('top_holder_majority')
+  const verdict = flags.includes('top_holder_majority') || (mintAuthority && freezeAuthority)
+    ? 'review'
+    : flags.length ? 'watch' : 'ok'
+  return {
+    mint,
+    supply: supply.result?.value?.uiAmountString || null,
+    decimals: supply.result?.value?.decimals ?? parsed.decimals ?? null,
+    mintAuthority,
+    freezeAuthority,
+    topHolderPct,
+    holders: holders.slice(0, 10),
+    flags,
+    verdict,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
 async function ofacScreen(address) {
   const res = await fetch('https://www.treasury.gov/ofac/downloads/sdn.xml', {
     headers: { accept: 'application/xml,text/xml', 'user-agent': 'solana-pulse-xaas' },
@@ -601,6 +647,10 @@ const PAID = {
     validate(url) { requirePubkey('address', url.searchParams.get('address')) },
     run: async (url) => ofacScreen(url.searchParams.get('address')),
   },
+  '/risk': {
+    validate(url) { requirePubkey('mint', url.searchParams.get('mint')) },
+    run: async (url) => mintRisk(url.searchParams.get('mint')),
+  },
 }
 
 function catalogResources() {
@@ -615,6 +665,7 @@ function catalogResources() {
     { path: '/extract', description: 'Fetch a public HTTPS URL and return title plus plain text. Query: url' },
     { path: '/search', description: 'Web search. Query: q' },
     { path: '/screen', description: 'OFAC SDN screen for a Solana wallet. Query: address' },
+    { path: '/risk', description: 'Mint/freeze authority and holder concentration. Query: mint' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -686,6 +737,7 @@ const server = createServer(async (req, res) => {
               { name: 'extract_url', description: 'Paid HTTPS fetch + text extract. 0.02 USDC.', inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
               { name: 'web_search', description: 'Paid web search. 0.01 USDC.', inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] } },
               { name: 'ofac_screen', description: 'Paid OFAC SDN screen for a Solana address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
+              { name: 'mint_risk', description: 'Paid Solana mint risk: authorities + holder concentration. 0.02 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
             ],
           },
         })
@@ -700,6 +752,7 @@ const server = createServer(async (req, res) => {
         extract_url: '/extract',
         web_search: '/search',
         ofac_screen: '/screen',
+        mint_risk: '/risk',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
