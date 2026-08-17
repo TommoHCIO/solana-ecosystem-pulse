@@ -165,6 +165,7 @@ const ROUTE_PRICE = {
   '/psmp': { usdc: '10000', sol: '10000000' },
   '/vnid': { usdc: '10000', sol: '10000000' },
   '/perp': { usdc: '50000', sol: '50000000' },
+  '/jpos': { usdc: '50000', sol: '50000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1106,6 +1107,13 @@ const BAZAAR = {
     longAvailableLiquidity: '0',
     shortAvailableLiquidity: '0',
   }),
+  '/jpos': bazaarExtension({
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+  }, {
+    address: '4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA',
+    count: 0,
+    positions: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1278,6 +1286,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/psmp': 'Live Solana recent performance samples for a required sample limit',
         '/vnid': 'Live Solana vote accounts for a required validator identity',
         '/perp': 'Live Jupiter perpetual liquidity borrow and utilization for a required market mint',
+        '/jpos': 'Live Jupiter perpetual positions for a required wallet address',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1579,7 +1588,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                               ? ['solana', 'rpc', 'vote', 'identity']
                                                                                                                                                                                                                                                                                                               : path === '/perp'
                                                                                                                                                                                                                                                                                                                 ? ['solana', 'jupiter', 'perps', 'funding']
-                                                                                                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                : path === '/jpos'
+                                                                                                                                                                                                                                                                                                                  ? ['solana', 'jupiter', 'perps', 'positions']
+                                                                                                                                                                                                                                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2799,6 +2810,26 @@ async function jupiterPerpPool(mintRaw) {
     openFeePercent: body.openFeePercent ?? null,
     maxRequestExecutionSec: body.maxRequestExecutionSec ?? null,
     maxPriceImpactFeePercent: body.maxPriceImpactFeePercent ?? null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function jupiterPerpPositions(addressRaw) {
+  const address = requirePubkey('address', addressRaw)
+  const posUrl = 'https://perps-api.jup.ag/v1/positions?walletAddress=' + encodeURIComponent(address)
+  const res = await fetch(posUrl, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok || body.code || body.error) {
+    const err = new Error(body.message || body.error || 'jupiter perp positions failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const rows = Array.isArray(body.dataList) ? body.dataList.slice(0, 20) : []
+  return {
+    address,
+    count: Number(body.count ?? rows.length),
+    positions: rows,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -6566,6 +6597,12 @@ const PAID = {
     },
     run: async (url) => jupiterPerpPool(url.searchParams.get('mint')),
   },
+  '/jpos': {
+    validate(url) {
+      requirePubkey('address', url.searchParams.get('address'))
+    },
+    run: async (url) => jupiterPerpPositions(url.searchParams.get('address')),
+  },
 }
 
 function catalogResources() {
@@ -6724,6 +6761,7 @@ function catalogResources() {
     { path: '/psmp', description: 'Live Solana recent performance samples for a required sample limit' },
     { path: '/vnid', description: 'Live Solana vote accounts for a required validator identity' },
     { path: '/perp', description: 'Live Jupiter perpetual liquidity borrow and utilization for a required market mint' },
+    { path: '/jpos', description: 'Live Jupiter perpetual positions for a required wallet address' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6942,6 +6980,7 @@ const server = createServer(async (req, res) => {
               { name: 'performance_samples', description: 'Paid Solana recent performance samples for a required sample limit. 0.01 USDC.', inputSchema: { type: 'object', properties: { limit: { type: 'string' } }, required: ['limit'] } },
               { name: 'vote_accounts_by_identity', description: 'Paid Solana vote accounts for a required validator identity. 0.01 USDC.', inputSchema: { type: 'object', properties: { identity: { type: 'string' } }, required: ['identity'] } },
               { name: 'jupiter_perp_pool', description: 'Paid Jupiter perpetual liquidity, borrow, and utilization for SOL ETH or WBTC. 0.05 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
+              { name: 'jupiter_perp_positions', description: 'Paid Jupiter perpetual positions for a required wallet address. 0.05 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
             ],
           },
         })
@@ -7100,6 +7139,7 @@ const server = createServer(async (req, res) => {
         performance_samples: '/psmp',
         vote_accounts_by_identity: '/vnid',
         jupiter_perp_pool: '/perp',
+        jupiter_perp_positions: '/jpos',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
