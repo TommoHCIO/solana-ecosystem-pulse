@@ -62,6 +62,7 @@ const ROUTE_PRICE = {
   '/rtx': { usdc: '5000', sol: '5000000' },
   '/shred': { usdc: '5000', sol: '5000000' },
   '/epi': { usdc: '5000', sol: '5000000' },
+  '/gov': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -389,6 +390,13 @@ const BAZAAR = {
     blockHeight: 250000000,
     transactionCount: 400000000000,
   }),
+  '/gov': bazaarExtension({}, {
+    initial: 0.08,
+    terminal: 0.015,
+    taper: 0.15,
+    foundation: 0.05,
+    foundationTerm: 7,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -458,6 +466,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/rtx': 'Live Solana max retransmit slot',
         '/shred': 'Live Solana max shred-insert slot',
         '/epi': 'Live Solana current epoch progress',
+        '/gov': 'Live Solana inflation governor parameters',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -553,7 +562,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                 ? ['solana', 'shred', 'insert', 'blockstore']
                                                                                                 : path === '/epi'
                                                                                                   ? ['solana', 'epoch', 'progress', 'slots']
-                                                                                                  : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                  : path === '/gov'
+                                                                                                    ? ['solana', 'inflation', 'governor', 'taper']
+                                                                                                    : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1147,6 +1158,19 @@ async function circulatingSupply() {
     nonCirculating: value.nonCirculating,
     solTotal: Number((value.total / 1e9).toFixed(9)),
     solCirculating: Number((value.circulating / 1e9).toFixed(9)),
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function inflationGovernor() {
+  const res = await rpc('getInflationGovernor', [])
+  const value = res.result || {}
+  return {
+    initial: value.initial,
+    terminal: value.terminal,
+    taper: value.taper,
+    foundation: value.foundation,
+    foundationTerm: value.foundationTerm,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -1929,6 +1953,10 @@ const PAID = {
     validate() {},
     run: async () => epochInfo(),
   },
+  '/gov': {
+    validate() {},
+    run: async () => inflationGovernor(),
+  },
 }
 
 function catalogResources() {
@@ -1984,6 +2012,7 @@ function catalogResources() {
     { path: '/rtx', description: 'Live Solana max retransmit slot' },
     { path: '/shred', description: 'Live Solana max shred-insert slot' },
     { path: '/epi', description: 'Live Solana current epoch progress' },
+    { path: '/gov', description: 'Live Solana inflation governor parameters' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2096,6 +2125,7 @@ const server = createServer(async (req, res) => {
               { name: 'max_retransmit_slot', description: 'Paid Solana max retransmit slot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'max_shred_insert_slot', description: 'Paid Solana max shred-insert slot. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'epoch_info', description: 'Paid Solana current epoch progress. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
+              { name: 'inflation_governor', description: 'Paid Solana inflation governor parameters. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -2151,6 +2181,7 @@ const server = createServer(async (req, res) => {
         max_retransmit_slot: '/rtx',
         max_shred_insert_slot: '/shred',
         epoch_info: '/epi',
+        inflation_governor: '/gov',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
