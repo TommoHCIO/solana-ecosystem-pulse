@@ -66,6 +66,7 @@ const ROUTE_PRICE = {
   '/valid': { usdc: '5000', sol: '5000000' },
   '/sched': { usdc: '5000', sol: '5000000' },
   '/reward': { usdc: '10000', sol: '10000000' },
+  '/btime': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -414,6 +415,11 @@ const BAZAAR = {
     amount: 0,
     epoch: 800,
   }),
+  '/btime': bazaarExtension({ slot: '439000000' }, {
+    slot: 439000000,
+    unix: 1755430000,
+    iso: '2026-08-17T12:00:00.000Z',
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-achieved.trycloudflare.com') {
@@ -487,6 +493,7 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
         '/valid': 'Check whether a Solana blockhash is still valid',
         '/sched': 'Live Solana current-epoch leader schedule summary',
         '/reward': 'Live Solana inflation reward for a stake or vote address',
+        '/btime': 'Live Solana estimated production time for a slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -590,7 +597,9 @@ function paymentRequired(path = '/pulse', origin = 'https://lobby-laptop-shame-a
                                                                                                         ? ['solana', 'leader', 'schedule', 'epoch']
                                                                                                         : path === '/reward'
                                                                                                           ? ['solana', 'inflation', 'reward', 'stake']
-                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                          : path === '/btime'
+                                                                                                            ? ['solana', 'block', 'time', 'unix']
+                                                                                                            : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1213,6 +1222,35 @@ async function blockhashValid(blockhash) {
     blockhash: hash,
     valid: Boolean(res.result?.value),
     commitment: 'processed',
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+function parseSlot(slotRaw) {
+  if (slotRaw === null || slotRaw === '') {
+    const err = new Error('slot query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  const slot = Number(slotRaw)
+  if (!Number.isInteger(slot) || slot < 0) {
+    const err = new Error('slot must be a non-negative integer')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return slot
+}
+
+async function blockTime(slotRaw) {
+  const slot = parseSlot(slotRaw)
+  const res = await rpc('getBlockTime', [slot])
+  const unix = res.result
+  return {
+    slot,
+    unix,
+    iso: typeof unix === 'number' ? new Date(unix * 1000).toISOString() : null,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -2040,6 +2078,10 @@ const PAID = {
     validate(url) { requirePubkey('address', url.searchParams.get('address')) },
     run: async (url) => inflationReward(url.searchParams.get('address')),
   },
+  '/btime': {
+    validate(url) { parseSlot(url.searchParams.get('slot')) },
+    run: async (url) => blockTime(url.searchParams.get('slot')),
+  },
 }
 
 function catalogResources() {
@@ -2099,6 +2141,7 @@ function catalogResources() {
     { path: '/valid', description: 'Check whether a Solana blockhash is still valid' },
     { path: '/sched', description: 'Live Solana current-epoch leader schedule summary' },
     { path: '/reward', description: 'Live Solana inflation reward for a stake or vote address' },
+    { path: '/btime', description: 'Live Solana estimated production time for a slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -2215,6 +2258,7 @@ const server = createServer(async (req, res) => {
               { name: 'blockhash_valid', description: 'Paid Solana isBlockhashValid check. 0.005 USDC.', inputSchema: { type: 'object', properties: { blockhash: { type: 'string' } }, required: ['blockhash'] } },
               { name: 'leader_schedule', description: 'Paid Solana current-epoch leader schedule summary. 0.005 USDC.', inputSchema: { type: 'object', properties: {} } },
               { name: 'inflation_reward', description: 'Paid Solana inflation reward for a stake or vote address. 0.01 USDC.', inputSchema: { type: 'object', properties: { address: { type: 'string' } }, required: ['address'] } },
+              { name: 'block_time', description: 'Paid Solana getBlockTime for a slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
             ],
           },
         })
@@ -2274,6 +2318,7 @@ const server = createServer(async (req, res) => {
         blockhash_valid: '/valid',
         leader_schedule: '/sched',
         inflation_reward: '/reward',
+        block_time: '/btime',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://lobby-laptop-shame-achieved.trycloudflare.com')
