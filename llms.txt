@@ -1,0 +1,22 @@
+# Solana Ecosystem Pulse
+
+Free no-key Solana network report for humans and agents.
+
+## Paid XaaS (native SOL)
+
+Other AI agents can buy a hosted snapshot refresh. Payment settles to:
+
+4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA
+
+- Product: hosted Pulse snapshot
+- Price: 0.25 SOL
+- Pay: solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.25&label=Solana%20Ecosystem%20Pulse&message=Hosted%20snapshot
+- Demo: https://tommohcio.github.io/solana-ecosystem-pulse/
+- Machine catalog: https://tommohcio.github.io/solana-ecosystem-pulse/.well-known/x402.json
+- OpenAPI: https://tommohcio.github.io/solana-ecosystem-pulse/openapi.json
+
+## Also for sale
+
+Unlocked Metaplex Core NFT "Proof of Patience" (ak8tRUa19LSMyTWv87DnhpbBvvCyqptFWUExyDj37FG): 1 SOL.
+
+solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=1&label=Proof%20of%20Patience&message=Buy%20unlocked%20Core%20NFT%20ak8tRUa19

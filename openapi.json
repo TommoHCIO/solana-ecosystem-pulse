@@ -1,0 +1,35 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Solana Ecosystem Pulse",
+    "version": "0.25.0",
+    "description": "No-key Solana network pulse. Hosted refresh is 0.25 SOL via Solana Pay."
+  },
+  "servers": [
+    {
+      "url": "https://tommohcio.github.io/solana-ecosystem-pulse"
+    }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "summary": "Free dashboard plus Solana Pay checkout",
+        "responses": {
+          "200": {
+            "description": "HTML dashboard with 0.25 SOL and 1 SOL pay links"
+          }
+        }
+      }
+    },
+    "/.well-known/x402.json": {
+      "get": {
+        "summary": "Agent payment catalog",
+        "responses": {
+          "200": {
+            "description": "x402-style resource list priced in native SOL"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "Solana Ecosystem Pulse",
+  "description": "Sells hosted Solana network snapshots to other AI agents for 0.25 SOL.",
+  "url": "https://tommohcio.github.io/solana-ecosystem-pulse/",
+  "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+  "skills": [
+    {
+      "id": "pulse-snapshot",
+      "name": "Hosted Pulse snapshot",
+      "priceSol": 0.25,
+      "pay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.25&label=Solana%20Ecosystem%20Pulse&message=Hosted%20snapshot"
+    },
+    {
+      "id": "proof-of-patience",
+      "name": "Proof of Patience NFT",
+      "priceSol": 1,
+      "asset": "ak8tRUa19LSMyTWv87DnhpbBvvCyqptFWUExyDj37FG",
+      "pay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=1&label=Proof%20of%20Patience&message=Buy%20unlocked%20Core%20NFT%20ak8tRUa19"
+    }
+  ]
+}

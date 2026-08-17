@@ -1,0 +1,47 @@
+{
+  "x402Version": 2,
+  "name": "Solana Ecosystem Pulse",
+  "description": "No-key Solana network pulse JSON for AI agents. Hosted refresh is paid in native SOL.",
+  "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+  "resources": [
+    {
+      "resource": "https://tommohcio.github.io/solana-ecosystem-pulse/",
+      "method": "GET",
+      "description": "Hosted Solana network snapshot refresh for agents",
+      "mimeType": "text/html",
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          "amount": "250000000",
+          "asset": "native",
+          "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=0.25&label=Solana%20Ecosystem%20Pulse&message=Hosted%20snapshot"
+          }
+        }
+      ]
+    },
+    {
+      "resource": "https://tommohcio.github.io/solana-ecosystem-pulse/",
+      "method": "GET",
+      "description": "Unlocked Proof of Patience Metaplex Core NFT",
+      "mimeType": "application/json",
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+          "amount": "1000000000",
+          "asset": "native",
+          "payTo": "4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "asset": "ak8tRUa19LSMyTWv87DnhpbBvvCyqptFWUExyDj37FG",
+            "solanaPay": "solana:4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA?amount=1&label=Proof%20of%20Patience&message=Buy%20unlocked%20Core%20NFT%20ak8tRUa19"
+          }
+        }
+      ]
+    }
+  ]
+}
