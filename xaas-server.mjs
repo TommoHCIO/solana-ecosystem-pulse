@@ -161,6 +161,7 @@ const ROUTE_PRICE = {
   '/htcs': { usdc: '5000', sol: '5000000' },
   '/epcs': { usdc: '5000', sol: '5000000' },
   '/txcs': { usdc: '5000', sol: '5000000' },
+  '/stcs': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1069,6 +1070,14 @@ const BAZAAR = {
   }, {
     transactionCount: 0,
   }),
+  '/stcs': bazaarExtension({
+    sigs: '5VERv8NMvzbJMEkV8xnrLkEaWRtSz9CosKDYjCJjBRnbJLgp8uirBgmQpjKhoR4tjF3ZpRzrFmBV6UjKdiSZkQUW',
+    slot: '439000000',
+  }, {
+    count: 1,
+    found: 0,
+    statuses: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1237,6 +1246,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/htcs': 'Live Solana finalized block height after a minimum context slot',
         '/epcs': 'Live Solana current epoch progress after a minimum context slot',
         '/txcs': 'Live Solana ledger transaction count after a minimum context slot',
+        '/stcs': 'Live Solana signature statuses after a minimum context slot',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1530,7 +1540,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                       ? ['solana', 'rpc', 'epoch', 'slot']
                                                                                                                                                                                                                                                                                                       : path === '/txcs'
                                                                                                                                                                                                                                                                                                         ? ['solana', 'rpc', 'tx', 'slot']
-                                                                                                                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                        : path === '/stcs'
+                                                                                                                                                                                                                                                                                                          ? ['solana', 'rpc', 'sig', 'slot']
+                                                                                                                                                                                                                                                                                                          : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -1584,6 +1596,27 @@ async function signatureStatuses(raw) {
     err: item?.err ?? null,
   }))
   return {
+    count: rows.length,
+    found: rows.filter((row) => row.found).length,
+    statuses: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function signatureStatusesMinContext(raw, slotRaw) {
+  const sigs = parseSigs(raw)
+  const minContextSlot = parseSlot(slotRaw)
+  const res = await rpc('getSignatureStatuses', [sigs, { searchTransactionHistory: true, minContextSlot }])
+  const rows = (res.result?.value || []).map((item, index) => ({
+    signature: sigs[index],
+    found: Boolean(item),
+    slot: item?.slot ?? null,
+    confirmations: item?.confirmations ?? null,
+    confirmationStatus: item?.confirmationStatus ?? null,
+    err: item?.err ?? null,
+  }))
+  return {
+    minContextSlot,
     count: rows.length,
     found: rows.filter((row) => row.found).length,
     statuses: rows,
@@ -6355,6 +6388,16 @@ const PAID = {
       url.searchParams.get('slot'),
     ),
   },
+  '/stcs': {
+    validate(url) {
+      parseSigs(url.searchParams.get('sigs'))
+      parseSlot(url.searchParams.get('slot'))
+    },
+    run: async (url) => signatureStatusesMinContext(
+      url.searchParams.get('sigs'),
+      url.searchParams.get('slot'),
+    ),
+  },
 }
 
 function catalogResources() {
@@ -6509,6 +6552,7 @@ function catalogResources() {
     { path: '/htcs', description: 'Live Solana finalized block height after a minimum context slot' },
     { path: '/epcs', description: 'Live Solana current epoch progress after a minimum context slot' },
     { path: '/txcs', description: 'Live Solana ledger transaction count after a minimum context slot' },
+    { path: '/stcs', description: 'Live Solana signature statuses after a minimum context slot' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -6723,6 +6767,7 @@ const server = createServer(async (req, res) => {
               { name: 'block_height_min_context', description: 'Paid Solana finalized block height after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'epoch_info_min_context', description: 'Paid Solana current epoch progress after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
               { name: 'transaction_count_min_context', description: 'Paid Solana ledger transaction count after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'signature_statuses_min_context', description: 'Paid Solana getSignatureStatuses after a minimum context slot. 0.005 USDC.', inputSchema: { type: 'object', properties: { sigs: { type: 'string' }, slot: { type: 'string' } }, required: ['sigs', 'slot'] } },
             ],
           },
         })
@@ -6877,6 +6922,7 @@ const server = createServer(async (req, res) => {
         block_height_min_context: '/htcs',
         epoch_info_min_context: '/epcs',
         transaction_count_min_context: '/txcs',
+        signature_statuses_min_context: '/stcs',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
