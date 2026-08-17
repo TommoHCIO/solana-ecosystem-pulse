@@ -112,6 +112,7 @@ const ROUTE_PRICE = {
   '/mslc': { usdc: '10000', sol: '10000000' },
   '/gpsl': { usdc: '15000', sol: '15000000' },
   '/blkt': { usdc: '10000', sol: '10000000' },
+  '/vdel': { usdc: '10000', sol: '10000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -684,6 +685,10 @@ const BAZAAR = {
     count: 0,
     signatures: [],
   }),
+  '/vdel': bazaarExtension({}, {
+    count: 0,
+    delinquent: [],
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -803,6 +808,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/mslc': 'Live Solana multi-account data slices by offset and length',
         '/gpsl': 'Live Solana program accounts with a sized data slice',
         '/blkt': 'Live Solana versioned block signatures for a slot',
+        '/vdel': 'Live Solana delinquent vote accounts including unstaked',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -998,7 +1004,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                     ? ['solana', 'program', 'dataslice', 'gpa']
                                                                                                                                                                                                     : path === '/blkt'
                                                                                                                                                                                                       ? ['solana', 'block', 'signatures', 'versioned']
-                                                                                                                                                                                                      : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                      : path === '/vdel'
+                                                                                                                                                                                                        ? ['solana', 'votes', 'delinquent', 'unstaked']
+                                                                                                                                                                                                        : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     extensions: {
@@ -2311,6 +2319,23 @@ async function voteAccount(voteRaw) {
     rootSlot: row.rootSlot ?? null,
     epochCredits: Array.isArray(row.epochCredits) ? row.epochCredits.slice(-4) : [],
     delinquent: !current[0],
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function delinquentVoteAccounts() {
+  const res = await rpc('getVoteAccounts', [{ keepUnstakedDelinquents: true }])
+  const rows = (res.result?.delinquent || []).slice(0, 20).map((row) => ({
+    vote: row.votePubkey ?? null,
+    node: row.nodePubkey ?? null,
+    commission: row.commission ?? null,
+    activatedStake: row.activatedStake ?? 0,
+    lastVote: row.lastVote ?? null,
+    rootSlot: row.rootSlot ?? null,
+  }))
+  return {
+    count: rows.length,
+    delinquent: rows,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -4137,6 +4162,10 @@ const PAID = {
     validate(url) { parseSlot(url.searchParams.get('slot')) },
     run: async (url) => blockSignatures(url.searchParams.get('slot')),
   },
+  '/vdel': {
+    validate() {},
+    run: async () => delinquentVoteAccounts(),
+  },
 }
 
 function catalogResources() {
@@ -4242,6 +4271,7 @@ function catalogResources() {
     { path: '/mslc', description: 'Live Solana multi-account data slices by offset and length' },
     { path: '/gpsl', description: 'Live Solana program accounts with a sized data slice' },
     { path: '/blkt', description: 'Live Solana versioned block signatures for a slot' },
+    { path: '/vdel', description: 'Live Solana delinquent vote accounts including unstaked' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -4407,6 +4437,7 @@ const server = createServer(async (req, res) => {
               { name: 'multiple_account_slices', description: 'Paid Solana multi-account data slices by offset and length. 0.01 USDC.', inputSchema: { type: 'object', properties: { addresses: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['addresses', 'offset', 'length'] } },
               { name: 'program_account_slices', description: 'Paid Solana program accounts with a sized data slice. 0.015 USDC.', inputSchema: { type: 'object', properties: { program: { type: 'string' }, space: { type: 'string' }, offset: { type: 'string' }, length: { type: 'string' } }, required: ['program', 'space', 'offset', 'length'] } },
               { name: 'block_signatures', description: 'Paid Solana versioned block signatures for a slot. 0.01 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'delinquent_votes', description: 'Paid Solana delinquent vote accounts including unstaked. 0.01 USDC.', inputSchema: { type: 'object', properties: {} } },
             ],
           },
         })
@@ -4512,6 +4543,7 @@ const server = createServer(async (req, res) => {
         multiple_account_slices: '/mslc',
         program_account_slices: '/gpsl',
         block_signatures: '/blkt',
+        delinquent_votes: '/vdel',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
