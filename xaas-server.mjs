@@ -54,13 +54,25 @@ function encodeHeader(obj) {
   return Buffer.from(JSON.stringify(obj)).toString('base64')
 }
 
+function isPubkey(value) {
+  return typeof value === 'string' && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value)
+}
+
 async function rpc(method, params) {
   const res = await fetch(RPC, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
   })
-  return res.json()
+  const body = await res.json()
+  if (body.error) {
+    const err = new Error(body.error.message || 'rpc_error')
+    err.status = 502
+    err.code = 'rpc_error'
+    err.detail = body.error
+    throw err
+  }
+  return body
 }
 
 function decodeProof(raw) {
@@ -135,57 +147,95 @@ function sendFile(res, path, type) {
   res.end(body)
 }
 
+function requirePubkey(name, value) {
+  if (!value) {
+    const err = new Error(name + ' query param is required')
+    err.status = 400
+    err.code = 'missing_param'
+    throw err
+  }
+  if (!isPubkey(value)) {
+    const err = new Error(name + ' must be a base58 public key')
+    err.status = 400
+    err.code = 'invalid_param'
+    throw err
+  }
+  return value
+}
+
 async function latestPulse() {
   const slot = await rpc('getSlot', [])
   const epoch = await rpc('getEpochInfo', [])
   const health = await rpc('getHealth', [])
   return {
     generatedAt: new Date().toISOString(),
-    rpc: RPC,
-    health: health.result ?? health.error ?? 'unknown',
+    commitment: 'confirmed',
+    health: health.result ?? 'unknown',
     slot: slot.result ?? null,
     epoch: epoch.result ?? null,
   }
 }
 
 async function solBalance(address) {
-  if (!address) throw new Error('address required')
   const bal = await rpc('getBalance', [address, { commitment: 'confirmed' }])
   const lamports = bal.result?.value ?? null
   return {
     address,
     lamports,
-    sol: lamports == null ? null : lamports / 1e9,
+    sol: lamports == null ? null : Number((lamports / 1e9).toFixed(9)),
+    commitment: 'confirmed',
     generatedAt: new Date().toISOString(),
   }
 }
 
 async function solTx(sig) {
-  if (!sig) throw new Error('sig required')
-  const tx = await rpc('getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }])
-  return { sig, tx: tx.result ?? null, generatedAt: new Date().toISOString() }
+  const tx = await rpc('getTransaction', [sig, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }])
+  if (!tx.result) {
+    const err = new Error('transaction not found')
+    err.status = 404
+    err.code = 'not_found'
+    throw err
+  }
+  return { sig, found: true, tx: tx.result, generatedAt: new Date().toISOString() }
 }
 
 async function solTokens(address) {
-  if (!address) throw new Error('address required')
   const token = await rpc('getTokenAccountsByOwner', [
     address,
     { programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' },
     { encoding: 'jsonParsed' },
   ])
-  const rows = (token.result?.value ?? []).map((item) => ({
+  const token2022 = await rpc('getTokenAccountsByOwner', [
+    address,
+    { programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb' },
+    { encoding: 'jsonParsed' },
+  ])
+  const rows = [...(token.result?.value ?? []), ...(token2022.result?.value ?? [])].map((item) => ({
     pubkey: item.pubkey,
     mint: item.account.data.parsed?.info?.mint,
     amount: item.account.data.parsed?.info?.tokenAmount?.uiAmountString,
+    program: item.account.owner,
   }))
-  return { address, tokens: rows, generatedAt: new Date().toISOString() }
+  return { address, count: rows.length, tokens: rows, generatedAt: new Date().toISOString() }
 }
 
 const PAID = {
-  '/pulse': async () => latestPulse(),
-  '/balance': async (url) => solBalance(url.searchParams.get('address')),
-  '/tx': async (url) => solTx(url.searchParams.get('sig')),
-  '/tokens': async (url) => solTokens(url.searchParams.get('address')),
+  '/pulse': {
+    validate() {},
+    run: async () => latestPulse(),
+  },
+  '/balance': {
+    validate(url) { requirePubkey('address', url.searchParams.get('address')) },
+    run: async (url) => solBalance(url.searchParams.get('address')),
+  },
+  '/tx': {
+    validate(url) { requirePubkey('sig', url.searchParams.get('sig')) },
+    run: async (url) => solTx(url.searchParams.get('sig')),
+  },
+  '/tokens': {
+    validate(url) { requirePubkey('address', url.searchParams.get('address')) },
+    run: async (url) => solTokens(url.searchParams.get('address')),
+  },
 }
 
 function catalogResources() {
@@ -229,14 +279,22 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/llms.txt') {
       return sendFile(res, join(ROOT, 'llms.txt'), 'text/plain; charset=utf-8')
     }
+    if (url.pathname === '/sample') {
+      return json(res, 200, {
+        free: true,
+        note: 'Unpaid sample of /pulse so buyers can inspect quality before paying.',
+        data: await latestPulse(),
+      })
+    }
     const handler = PAID[url.pathname]
     if (handler) {
+      handler.validate(url)
       const proof = url.searchParams.get('payment')
         || req.headers['payment-signature']
         || req.headers['x-payment']
       if (await paymentOk(String(proof || ''))) {
-        return json(res, 200, await handler(url), {
-          'PAYMENT-RESPONSE': encodeHeader({ success: true, tx: proof }),
+        return json(res, 200, await handler.run(url), {
+          'PAYMENT-RESPONSE': encodeHeader({ success: true }),
         })
       }
       const required = paymentRequired()
@@ -247,17 +305,21 @@ const server = createServer(async (req, res) => {
         name: 'Solana Pulse XaaS',
         payTo: PAY_TO,
         paid: Object.keys(PAID),
+        freeSample: '/sample',
         priceUsdc: '0.001',
         priceSol: PRICE_SOL,
         catalog: '/.well-known/x402.json',
-        gap: 'CDP Bazaar top sellers are Ethereum RPC wrappers. Solana slot/balance/tx/token lookups are missing. These endpoints fill that gap.',
+        openapi: '/openapi.json',
+        quality: 'Params are validated before payment. Missing fields return 400, not 402. Token-2022 included. Free /sample shows live pulse JSON.',
       })
     }
-    res.writeHead(404, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ error: 'not_found' }))
+    return json(res, 404, { error: 'not_found', code: 'not_found' })
   } catch (error) {
-    res.writeHead(500, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ error: String(error) }))
+    const status = Number(error.status) || 500
+    return json(res, status, {
+      error: error.message || String(error),
+      code: error.code || 'server_error',
+    })
   }
 })
 

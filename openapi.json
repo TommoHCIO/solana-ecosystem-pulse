@@ -1,50 +1,77 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Solana Ecosystem Pulse",
-    "version": "0.25.0",
-    "description": "Live Solana slot/epoch pulse for AI agents. HTTP 402, 0.001 SOL per call.",
-    "x-guidance": "GET https://lobby-laptop-shame-achieved.trycloudflare.com/pulse. On 402, pay 0.001 SOL to 4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA then retry with ?sig=<txid>."
+    "title": "Solana Pulse XaaS",
+    "version": "0.26.0",
+    "description": "Solana chain-data APIs for agents. Inspect /sample free. Paid routes return HTTP 402 until PayAI Solana USDC (0.001) or native SOL (0.001) is settled.",
+    "x-guidance": "1) GET /sample to inspect quality. 2) GET a paid route. 3) On 402, pay the first accept (Solana USDC, amount 1000, feePayer 2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4) then retry with PAYMENT-SIGNATURE. Query params are validated before payment."
   },
   "servers": [
-    {
-      "url": "https://lobby-laptop-shame-achieved.trycloudflare.com"
-    },
-    {
-      "url": "https://tommohcio.github.io/solana-ecosystem-pulse"
-    }
+    { "url": "https://lobby-laptop-shame-achieved.trycloudflare.com" }
   ],
   "paths": {
-    "/": {
+    "/sample": {
       "get": {
-        "summary": "Free dashboard plus Solana Pay checkout",
-        "responses": {
-          "200": {
-            "description": "HTML dashboard with 0.25 SOL and 1 SOL pay links"
-          }
-        }
+        "summary": "Free live pulse sample",
+        "responses": { "200": { "description": "Unpaid sample of slot/epoch/health" } }
       }
     },
     "/pulse": {
       "get": {
         "summary": "Latest Solana slot, epoch, and health",
         "x-payment-info": {
-          "price": { "mode": "fixed", "currency": "SOL", "amount": "0.001" },
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.001" },
           "protocols": [{ "name": "x402", "version": 2 }]
         },
         "responses": {
-          "402": { "description": "Payment required. Pay 0.001 SOL to 4tdArRo4cvUQcTm88egZeWwY1HpJsZiCAKLzSnUSdVTA" },
-          "200": { "description": "Live pulse JSON after payment proof" }
+          "402": { "description": "Pay 0.001 USDC on Solana or 0.001 native SOL" },
+          "200": { "description": "Live pulse JSON" }
         }
       }
     },
-    "/.well-known/x402.json": {
+    "/balance": {
       "get": {
-        "summary": "Agent payment catalog",
+        "summary": "Native SOL balance",
+        "parameters": [{ "name": "address", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "x-payment-info": {
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.001" },
+          "protocols": [{ "name": "x402", "version": 2 }]
+        },
         "responses": {
-          "200": {
-            "description": "x402-style resource list priced in native SOL"
-          }
+          "400": { "description": "Missing or invalid address" },
+          "402": { "description": "Payment required" },
+          "200": { "description": "lamports and SOL" }
+        }
+      }
+    },
+    "/tx": {
+      "get": {
+        "summary": "Parsed Solana transaction",
+        "parameters": [{ "name": "sig", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "x-payment-info": {
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.001" },
+          "protocols": [{ "name": "x402", "version": 2 }]
+        },
+        "responses": {
+          "400": { "description": "Missing or invalid sig" },
+          "402": { "description": "Payment required" },
+          "404": { "description": "Transaction not found" },
+          "200": { "description": "Parsed transaction" }
+        }
+      }
+    },
+    "/tokens": {
+      "get": {
+        "summary": "SPL and Token-2022 accounts",
+        "parameters": [{ "name": "address", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "x-payment-info": {
+          "price": { "mode": "fixed", "currency": "USDC", "amount": "0.001" },
+          "protocols": [{ "name": "x402", "version": 2 }]
+        },
+        "responses": {
+          "400": { "description": "Missing or invalid address" },
+          "402": { "description": "Payment required" },
+          "200": { "description": "Token accounts" }
         }
       }
     }
