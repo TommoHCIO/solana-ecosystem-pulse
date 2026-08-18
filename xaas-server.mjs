@@ -180,6 +180,7 @@ const ROUTE_PRICE = {
   '/meta': { usdc: '5000', sol: '5000000' },
   '/pfee': { usdc: '5000', sol: '5000000' },
   '/stime': { usdc: '5000', sol: '5000000' },
+  '/eta': { usdc: '5000', sol: '5000000' },
 }
 const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 const FEE_PAYER = '2wKupLR9q6wXYppw8Gr2NvWxKBUqm4PPJKkQfoxHDBg4'
@@ -1233,6 +1234,11 @@ const BAZAAR = {
     unixTime: null,
     iso: null,
   }),
+  '/eta': bazaarExtension({}, {
+    epoch: null,
+    slotsRemaining: null,
+    etaSeconds: null,
+  }),
 }
 
 function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit.trycloudflare.com') {
@@ -1420,6 +1426,7 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
         '/meta': 'Live Solana token identity (name, symbol, icon, decimals, supply) for a required mint',
         '/pfee': 'Live Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh)',
         '/stime': 'Convert a required Solana slot to its block unix time and ISO timestamp',
+        '/eta': 'Live Solana epoch completion ETA (slots remaining, seconds, and estimated finish time)',
       }[path] || 'Solana chain data',
       mimeType: 'application/json',
       serviceName: 'Solana Pulse XaaS',
@@ -1751,7 +1758,9 @@ function paymentRequired(path = '/pulse', origin = 'https://meant-aye-allan-exit
                                                                                                                                                                                                                                                                                                                                             ? ['solana', 'priority-fee', 'gas', 'compute']
                                                                                                                                                                                                                                                                                                                                             : path === '/stime'
                                                                                                                                                                                                                                                                                                                                               ? ['solana', 'slot', 'time', 'timestamp']
-                                                                                                                                                                                                                                                                                                                                              : ['solana', 'rpc', 'balance', 'chain-data'],
+                                                                                                                                                                                                                                                                                                                                              : path === '/eta'
+                                                                                                                                                                                                                                                                                                                                                ? ['solana', 'epoch', 'eta', 'schedule']
+                                                                                                                                                                                                                                                                                                                                                : ['solana', 'rpc', 'balance', 'chain-data'],
     },
     accepts: [acceptUsdc, acceptSol],
     quote: 'Pay ' + (Number(price.usdc) / 1e6) + ' USDC or ' + (Number(price.sol) / 1e9)
@@ -3013,6 +3022,38 @@ async function jupiterPerpTrades(addressRaw) {
     address,
     count: Number(body.count ?? rows.length),
     trades: rows,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+async function epochEta() {
+  const res = await fetch('https://api.mainnet-beta.solana.com', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getEpochInfo' }),
+    signal: AbortSignal.timeout(15000),
+  })
+  const body = await res.json().catch(() => ({}))
+  const r = body && body.result
+  if (!res.ok || !r || typeof r.slotIndex !== 'number' || typeof r.slotsInEpoch !== 'number') {
+    const err = new Error('epoch info lookup failed')
+    err.status = 502
+    err.code = 'upstream_error'
+    throw err
+  }
+  const slotsRemaining = Math.max(0, r.slotsInEpoch - r.slotIndex)
+  // Solana targets ~400ms per slot.
+  const etaSeconds = Math.round(slotsRemaining * 0.4)
+  const progressPct = r.slotsInEpoch > 0 ? Number(((r.slotIndex / r.slotsInEpoch) * 100).toFixed(2)) : null
+  return {
+    epoch: r.epoch,
+    slotIndex: r.slotIndex,
+    slotsInEpoch: r.slotsInEpoch,
+    slotsRemaining,
+    progressPct,
+    etaSeconds,
+    estimatedFinish: new Date(Date.now() + etaSeconds * 1000).toISOString(),
+    slotTimeSeconds: 0.4,
     generatedAt: new Date().toISOString(),
   }
 }
@@ -7357,6 +7398,10 @@ const PAID = {
     validate() {},
     run: async () => priorityFeeRecommendation(),
   },
+  '/eta': {
+    validate() {},
+    run: async () => epochEta(),
+  },
   '/stime': {
     validate(url) {
       const slot = requireText('slot', url.searchParams.get('slot'))
@@ -7542,6 +7587,7 @@ function catalogResources() {
     { path: '/meta', description: 'Live Solana token identity (name, symbol, icon, decimals, supply) for a required mint' },
     { path: '/pfee', description: 'Live Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh)' },
     { path: '/stime', description: 'Convert a required Solana slot to its block unix time and ISO timestamp' },
+    { path: '/eta', description: 'Live Solana epoch completion ETA (slots remaining, seconds, and estimated finish time)' },
   ].map((item) => ({
     resource: item.path,
     method: 'GET',
@@ -7775,6 +7821,7 @@ const server = createServer(async (req, res) => {
               { name: 'token_meta', description: 'Paid Solana token identity (name, symbol, icon, decimals, supply, verification) for a required mint. 0.005 USDC.', inputSchema: { type: 'object', properties: { mint: { type: 'string' } }, required: ['mint'] } },
               { name: 'priority_fee', description: 'Paid Solana priority-fee recommendation with percentile levels (low/medium/high/veryHigh microLamports per compute unit). 0.005 USDC.', inputSchema: { type: 'object', properties: {}, required: [] } },
               { name: 'slot_time', description: 'Paid conversion of a required Solana slot to its block unix time and ISO timestamp. 0.005 USDC.', inputSchema: { type: 'object', properties: { slot: { type: 'string' } }, required: ['slot'] } },
+              { name: 'epoch_eta', description: 'Paid live Solana epoch completion ETA (slots remaining, seconds, estimated finish). 0.005 USDC.', inputSchema: { type: 'object', properties: {}, required: [] } },
             ],
           },
         })
@@ -7948,6 +7995,7 @@ const server = createServer(async (req, res) => {
         token_meta: '/meta',
         priority_fee: '/pfee',
         slot_time: '/stime',
+        epoch_eta: '/eta',
       }[body.params?.name]
       if (body.method === 'tools/call' && paidTool) {
         const required = paymentRequired(paidTool, 'https://meant-aye-allan-exit.trycloudflare.com')
